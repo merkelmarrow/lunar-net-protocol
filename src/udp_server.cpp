@@ -1,53 +1,42 @@
-#include <iostream>
-#include <boost/asio.hpp>
-#include <unordered_set>
-#include <nlohmann/json.hpp> // JSON handling
+#include "udp_server.hpp"
 
-using json = nlohmann::json;
-using boost::asio::ip::udp;
+UdpServer::UdpServer(boost::asio::io_context& context, int port)
+    : socket_(context, udp::endpoint(udp::v4(), port)) {}
 
-const int SERVER_PORT = 5000; // UDP server listens on this port
-std::unordered_set<int> received_packets; // Store sequence numbers to track missing ones
-
-void process_message(const std::string& message,udp::socket& socket,udp::endpoint sender_endpoint) {
-    try {
-        json received_json = json::parse(message);
-        int seq_num = received_json["seq_num"]; // Extract sequence number
-        std::string data = received_json["data"]; // Extract message content
-        // Check for duplicate packets
-        if (received_packets.count(seq_num)) {
-            std::cout << "[DUPLICATE] Ignored packet: " << seq_num << std::endl;
-            return;
-        }
-        // Store received packet number
-        received_packets.insert(seq_num);
-        std::cout << "[RECEIVED] Packet " << seq_num << ": " << data << std::endl;
-
-    } catch (std::exception& e) {
-        std::cerr << "[ERROR] Invalid message format: " << e.what() << std::endl;
-    }
+void UdpServer::start() {
+    std::cout << "[SERVER] UDP Server is running..." << std::endl;
+    receive_data();
 }
 
-int main() {
-    try {
-        boost::asio::io_context io_context;
-        udp::socket socket(io_context, udp::endpoint(udp::v4(), SERVER_PORT));
+void UdpServer::set_receive_callback(std::function<void(const std::string&)> callback) {
+    receive_callback_ = std::move(callback);
+}
 
-        char buffer[1024];
-        udp::endpoint sender_endpoint;
+void UdpServer::send_data(const std::string& message, const udp::endpoint& recipient) {
+    socket_.async_send_to(
+        boost::asio::buffer(message), recipient,
+        [this](boost::system::error_code ec, std::size_t /*length*/) {
+            if (ec) {
+                std::cerr << "[ERROR] Failed to send data: " << ec.message() << std::endl;
+            }
+        });
+}
 
-        std::cout << "[SERVER] UDP Server is running on port "<< SERVER_PORT << "..." << std::endl;
+void UdpServer::receive_data() {
+    socket_.async_receive_from(
+        boost::asio::buffer(buffer_), sender_endpoint_,
+        [this](boost::system::error_code ec, std::size_t length) {
+            if (!ec) {
+                std::string received_message(buffer_, length);
+                std::cout << "[RECEIVED] Message: " << received_message << std::endl;
 
-        while (true) {
-            size_t length = socket.receive_from(boost::asio::buffer(buffer), sender_endpoint);
-            std::string received_message(buffer, length);
+                if (receive_callback_) {
+                    receive_callback_(received_message);
+                }
 
-            process_message(received_message, socket, sender_endpoint);
-        }
-
-    } catch (std::exception &e) {
-        std::cerr << "[ERROR] " << e.what() << std::endl;
-    }
-
-    return 0;
+                // Example response message (Echoing back)
+                send_data("Received: " + received_message, sender_endpoint_);
+            }
+            receive_data();  // Continue listening
+        });
 }

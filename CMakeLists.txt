@@ -1,17 +1,17 @@
 cmake_minimum_required(VERSION 3.5.0)
 project(lunar-net-protocol VERSION 0.1.0 LANGUAGES C CXX)
 
-add_executable(lunar-net-protocol main.cpp)
+# Find dependencies
 find_package(Boost REQUIRED COMPONENTS system)
-find_package(nlohmann_json REQUIRED)
 
-# Define the source files for the UDP server
+# Define the source files for the UDP server and main logic
 set(SOURCES
+    main.cpp
     src/udp_server.cpp
 )
 
-# Create the UDP server executable
-add_executable(udp_server ${SOURCES})
+# Create a single executable
+add_executable(lunar-net-protocol ${SOURCES})
 
-# Link Boost and JSON libraries (after defining udp_server)
-target_link_libraries(udp_server PRIVATE Boost::system nlohmann_json::nlohmann_json)
+# Link Boost (and other necessary dependencies)
+target_link_libraries(lunar-net-protocol PRIVATE Boost::system)
