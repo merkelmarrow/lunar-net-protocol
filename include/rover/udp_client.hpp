@@ -4,6 +4,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
 #include <functional>
 
 #include "configs.hpp"
@@ -40,7 +41,12 @@ public:
   // the callback should handle/process the message string
   void set_receive_callback(std::function<void(const std::string &)> callback);
 
+  void start_receive();
+
 private:
+  void handle_receive(const boost::system::error_code &error,
+                      std::size_t bytes_transferred);
+
   boost::asio::io_context &io_context_;
   udp::socket socket_;
   udp::endpoint base_endpoint_;

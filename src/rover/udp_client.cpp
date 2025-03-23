@@ -1,5 +1,6 @@
 // src/rover/udp_client.cpp
 
+#include <boost/asio/error.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
@@ -77,4 +78,38 @@ void UdpClient::send_data(const std::string &message) {
 void UdpClient::set_receive_callback(
     std::function<void(const std::string &)> callback) {
   receive_callback_ = std::move(callback);
+}
+
+void UdpClient::start_receive() {
+  running_ = true;
+
+  socket_.async_receive_from(boost::asio::buffer(receive_buffer_),
+                             base_endpoint_,
+                             [this](const boost::system::error_code &error,
+                                    std::size_t bytes_transferred) {
+                               handle_receive(error, bytes_transferred);
+                             });
+}
+
+void UdpClient::handle_receive(const boost::system::error_code &error,
+                               std::size_t bytes_transferred) {
+  if (!error) {
+    std::string message(receive_buffer_.data(), bytes_transferred);
+    std::cout << "[Client] Received " << bytes_transferred << " bytes."
+              << std::endl;
+
+    if (receive_callback_) {
+      receive_callback_(message);
+    }
+
+    if (running_) {
+      start_receive();
+    }
+  } else if (error != boost::asio::error::operation_aborted) {
+    std::cerr << "[ERROR] Receive error: " << error.message() << std::endl;
+
+    if (running_) {
+      start_receive();
+    }
+  }
 }
