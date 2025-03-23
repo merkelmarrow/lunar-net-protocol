@@ -1,5 +1,6 @@
 // src/rover/udp_client.cpp
 
+#include <boost/asio/ip/udp.hpp>
 #include <iostream>
 
 #include <boost/asio/io_context.hpp>
@@ -8,7 +9,7 @@
 
 UdpClient::UdpClient(boost::asio::io_context &io_context)
     : io_context_(io_context), socket_(io_context, udp::endpoint(udp::v4(), 0)),
-      running_(false) {}
+      running_(false), receive_buffer_{} {}
 
 UdpClient::~UdpClient() {
   running_ = false;
@@ -20,5 +21,21 @@ UdpClient::~UdpClient() {
       std::cerr << "[ERROR] Error closing socket: " << ec.message()
                 << std::endl;
     }
+  }
+}
+
+void UdpClient::register_base(const std::string &host, int port) {
+  try {
+    udp::resolver resolver(io_context_);
+    auto endpoints = resolver.resolve(udp::v4(), host, std::to_string(port));
+
+    base_endpoint_ = *endpoints.begin();
+
+    std::cout << "[CLIENT] Registered base at " << host << ":" << port
+              << std::endl;
+  } catch (const std::exception &e) {
+    std::cerr << "[ERROR] Failed to register base endpoint: " << e.what()
+              << std::endl;
+    throw;
   }
 }
