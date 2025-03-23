@@ -53,4 +53,6 @@ private:
   std::array<char, CLIENT_SOCK_BUF_SIZE> receive_buffer_;
   std::function<void(const std::string &)> receive_callback_;
   bool running_;
+
+  std::mutex callback_mutex_; // Add mutex for callback protection
 };

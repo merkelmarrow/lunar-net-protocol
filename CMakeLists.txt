@@ -53,6 +53,7 @@ target_link_libraries(base_station PRIVATE Boost::system)
 # Rover executable
 add_executable(rover
     src/rover/udp_client.cpp
+    src/rover/rover_main.cpp
 )
 
 # Set include directories for moon_rover

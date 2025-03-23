@@ -35,8 +35,21 @@ std::unique_ptr<Message> Message::deserialise(const std::string &json_str) {
   try {
     nm::json j = nm::json::parse(json_str);
 
+    // Enhanced validation of required fields
     if (!j.contains("msg_type")) {
-      throw std::runtime_error("Invalid message: missing 'type' field");
+      throw std::runtime_error("Invalid message: missing 'msg_type' field");
+    }
+
+    if (!j["msg_type"].is_string()) {
+      throw std::runtime_error("Invalid message: 'msg_type' must be a string");
+    }
+
+    if (!j.contains("sender")) {
+      throw std::runtime_error("Invalid message: missing 'sender' field");
+    }
+
+    if (!j["sender"].is_string()) {
+      throw std::runtime_error("Invalid message: 'sender' must be a string");
     }
 
     std::string msg_type = j["msg_type"].get<std::string>();

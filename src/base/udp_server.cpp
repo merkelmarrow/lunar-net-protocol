@@ -13,6 +13,7 @@ void UdpServer::start() {
 
 void UdpServer::set_receive_callback(
     std::function<void(const std::string &)> callback) {
+  std::lock_guard<std::mutex> lock(callback_mutex_);
   receive_callback_ = std::move(callback);
 }
 
@@ -33,11 +34,26 @@ void UdpServer::receive_data() {
       boost::asio::buffer(buffer_), sender_endpoint_,
       [this](boost::system::error_code ec, std::size_t length) {
         if (!ec) {
-          std::string received_message(buffer_, length);
+          std::string received_message(buffer_.data(), length);
+
+          // Create local copies to avoid data races
+          udp::endpoint endpoint_copy;
+          std::function<void(const std::string &)> callback_copy;
+
+          {
+            std::lock_guard<std::mutex> endpoint_lock(endpoint_mutex_);
+            endpoint_copy = sender_endpoint_;
+          }
+
+          {
+            std::lock_guard<std::mutex> callback_lock(callback_mutex_);
+            callback_copy = receive_callback_;
+          }
+
           std::cout << "[RECEIVED] Message: " << received_message << std::endl;
 
-          if (receive_callback_) {
-            receive_callback_(received_message);
+          if (callback_copy) {
+            callback_copy(received_message);
           }
         }
         receive_data(); // Continue listening
@@ -45,5 +61,17 @@ void UdpServer::receive_data() {
 }
 
 const udp::endpoint UdpServer::get_sender_endpoint() {
+  std::lock_guard<std::mutex> lock(endpoint_mutex_);
   return sender_endpoint_;
+}
+
+UdpServer::~UdpServer() {
+  if (socket_.is_open()) {
+    boost::system::error_code ec;
+    socket_.close(ec);
+    if (ec) {
+      std::cerr << "[ERROR] Error closing server socket: " << ec.message()
+                << std::endl;
+    }
+  }
 }

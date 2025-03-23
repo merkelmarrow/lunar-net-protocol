@@ -53,30 +53,28 @@ void UdpClient::register_base(const std::string &host, int port) {
 
 void UdpClient::send_data(const std::string &message) {
   try {
-    // async_send_to initiates an async send operation
-    // the lambda function is called when the send completes
     socket_.async_send_to(
-        // boost::asio::buffer creates a buffer view of the message data
         boost::asio::buffer(message), base_endpoint_,
-        [this, message](const boost::system::error_code &error,
-                        std::size_t bytes_sent) {
-          // this lambda is called when the send operation completes
+        [](const boost::system::error_code &error, std::size_t bytes_sent) {
           if (error) {
+            // Log the error instead of throwing exception in async callback
             std::cerr << "[ERROR] Failed to send data: " << error.message()
                       << std::endl;
-            throw boost::system::system_error(error);
+          } else {
+            std::cout << "[CLIENT] Sent " << bytes_sent << " bytes."
+                      << std::endl;
           }
-          std::cout << "[CLIENT] Sent " << bytes_sent << " bytes." << std::endl;
         });
   } catch (const std::exception &error) {
     std::cerr << "[ERROR] Send error: " << error.what() << std::endl;
-    throw; // rethrow, caller should handle
+    throw; // This is fine since it's in the same thread
   }
 }
 
 // sets the callback function
 void UdpClient::set_receive_callback(
     std::function<void(const std::string &)> callback) {
+  std::lock_guard<std::mutex> lock(callback_mutex_);
   receive_callback_ = std::move(callback);
 }
 
@@ -98,18 +96,35 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
     std::cout << "[Client] Received " << bytes_transferred << " bytes."
               << std::endl;
 
-    if (receive_callback_) {
-      receive_callback_(message);
+    // Get a thread-safe copy of the callback
+    std::function<void(const std::string &)> callback_copy;
+    {
+      std::lock_guard<std::mutex> lock(callback_mutex_);
+      callback_copy = receive_callback_;
     }
 
+    if (callback_copy) {
+      callback_copy(message);
+    }
+
+    // Only continue listening if no error occurred
     if (running_) {
       start_receive();
     }
   } else if (error != boost::asio::error::operation_aborted) {
     std::cerr << "[ERROR] Receive error: " << error.message() << std::endl;
 
+    // Avoid immediate retry loop by using a timer
     if (running_) {
-      start_receive();
+      auto timer = std::make_shared<boost::asio::steady_timer>(
+          io_context_, boost::asio::chrono::milliseconds(500));
+
+      timer->async_wait([this, timer](const boost::system::error_code &ec) {
+        if (!ec && running_) {
+          start_receive();
+        }
+      });
     }
   }
+  // no else branch so we don't restart on operation_aborted
 }

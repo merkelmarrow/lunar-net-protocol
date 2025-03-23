@@ -18,8 +18,10 @@ string_to_tp(const std::string &time_str) {
   ss >> std::chrono::parse("%FT%T%z", result);
 
   if (ss.fail()) {
-    std::cerr << "Failed to parse timestamp. " << time_str << std::endl;
-    std::cerr << "Using current time." << std::endl;
+    std::cerr << "[ERROR] Failed to parse timestamp. " << time_str << std::endl;
+    std::cerr << "[WARNING] Using current time as fallback for failed "
+                 "timestamp parse."
+              << std::endl;
     return std::chrono::system_clock::now();
   }
 
