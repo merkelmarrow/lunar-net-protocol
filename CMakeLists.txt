@@ -5,17 +5,15 @@ project(lunar-net-protocol VERSION 0.1.0 LANGUAGES C CXX)
 find_package(Boost REQUIRED COMPONENTS system)
 
 
-# add later
 ### COMMON
 # Common library
-#add_library(common
-#)
+add_library(common
+    include/common/configs.hpp
+)
 
-# add later
-# Set include directories for the common library
-#target_include_directories(common PUBLIC 
-#    ${CMAKE_SOURCE_DIR}/include/common
-#)
+target_include_directories(common PUBLIC
+    ${CMAKE_SOURCE_DIR}/include/common
+)
 
 
 ### BASE STATION
@@ -31,22 +29,20 @@ target_include_directories(base_station PRIVATE
 )
 
 # Link base_station with common library and boost
-#target_link_libraries(base_station PRIVATE common)
+target_link_libraries(base_station PRIVATE common)
 target_link_libraries(base_station PRIVATE Boost::system)
 
-# add later
 ### ROVER
 # Rover executable
-#add_executable(rover
-#)
+add_executable(rover
+    src/rover/udp_client.cpp
+)
 
-# add later
 # Set include directories for moon_rover
-#target_include_directories(rover PRIVATE
-#    ${CMAKE_SOURCE_DIR}/include/rover
-#)
+target_include_directories(rover PRIVATE
+    ${CMAKE_SOURCE_DIR}/include/rover
+)
 
-# add later
-# Link moon_rover with common library and Boost
-#target_link_libraries(rover PRIVATE common)
-#target_link_libraries(rover PRIVATE Boost::system)
+# Link rover with common library and Boost
+target_link_libraries(rover PRIVATE common)
+target_link_libraries(rover PRIVATE Boost::system)
