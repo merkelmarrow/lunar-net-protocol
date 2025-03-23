@@ -15,6 +15,7 @@ public:
   ~UdpClient();
 
   void register_base(const std::string &host, int port);
+  void send_data(const std::string &message);
 
 private:
   boost::asio::io_context &io_context_;

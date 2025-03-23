@@ -1,6 +1,8 @@
 // src/rover/udp_client.cpp
 
 #include <boost/asio/ip/udp.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/system/system_error.hpp>
 #include <iostream>
 
 #include <boost/asio/io_context.hpp>
@@ -36,6 +38,25 @@ void UdpClient::register_base(const std::string &host, int port) {
   } catch (const std::exception &e) {
     std::cerr << "[ERROR] Failed to register base endpoint: " << e.what()
               << std::endl;
+    throw;
+  }
+}
+
+void UdpClient::send_data(const std::string &message) {
+  try {
+    socket_.async_send_to(
+        boost::asio::buffer(message), base_endpoint_,
+        [this, message](const boost::system::error_code &error,
+                        std::size_t bytes_sent) {
+          if (error) {
+            std::cerr << "[ERROR] Failed to send data: " << error.message()
+                      << std::endl;
+            throw boost::system::system_error(error);
+          }
+          std::cout << "[CLIENT] Sent " << bytes_sent << " bytes." << std::endl;
+        });
+  } catch (const std::exception &error) {
+    std::cerr << "[ERROR] Send error: " << error.what() << std::endl;
     throw;
   }
 }
