@@ -22,6 +22,9 @@ FetchContent_MakeAvailable(json)
 add_library(common
     include/common/configs.hpp
     src/common/message.cpp
+    src/common/timepoint_utils.cpp
+    include/common/basic_message.hpp
+    include/common/message_types.hpp
 )
 
 target_include_directories(common PUBLIC
