@@ -2,17 +2,9 @@
 
 #pragma once
 
-#include "nlohmann/json.hpp"
-
 #include <chrono>
-#include <functional>
 #include <memory>
 #include <string>
-#include <unordered_map>
-
-namespace {
-namespace nm = nlohmann;
-}
 
 // base class for all message types
 class Message {

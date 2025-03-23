@@ -3,6 +3,8 @@
 #include <iostream>
 #include <memory>
 
+#include "nlohmann/json.hpp"
+
 #include "message.hpp"
 #include "message_types.hpp"
 
