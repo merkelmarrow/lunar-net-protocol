@@ -39,10 +39,11 @@ void UdpServer::receive_data() {
           if (receive_callback_) {
             receive_callback_(received_message);
           }
-
-          // Example response message (Echoing back)
-          send_data("Received: " + received_message, sender_endpoint_);
         }
         receive_data(); // Continue listening
       });
+}
+
+const udp::endpoint UdpServer::get_sender_endpoint() {
+  return sender_endpoint_;
 }

@@ -31,7 +31,7 @@ target_include_directories(common PUBLIC
     ${CMAKE_SOURCE_DIR}/include/common
 )
 
-target_link_libraries(common PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(common PUBLIC nlohmann_json::nlohmann_json)
 
 ### BASE STATION
 # Base station executable

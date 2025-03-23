@@ -25,22 +25,60 @@ void print_base_usage() {
 
 void process_commands(UdpServer &server);
 
-int main() {
+int main(int argc, char *argv[]) {
   try {
-    boost::asio::io_context io_context;
-    UdpServer server(io_context, 5000);
+    int port = 5000; // default port
 
-    server.set_receive_callback([&server](const std::string &message) {
-      std::cout << "[CALLBACK] Received message: " << message << std::endl;
+    // parse command line arguments
+    if (argc > 1) {
+      try {
+        port = std::stoi(argv[1]);
+      } catch (const std::exception &error) {
+        std::cerr << "[ERROR] Invalid port number: " << argv[1] << std::endl;
+        print_base_usage();
+        return 1;
+      }
+    }
+
+    // Initialize the io_context
+    boost::asio::io_context io_context;
+
+    // Create the server
+    UdpServer server(io_context, port);
+
+    // Set the callback to process incoming messages
+    server.set_receive_callback([&server](const std::string &received_data) {
+      try {
+        // Try to deserialize the message
+        if (Message::is_valid_json(received_data)) {
+          std::cout << "[BASE] Received JSON message:" << std::endl;
+          std::cout << Message::pretty_print(received_data) << std::endl;
+
+          // Deserialize to proper message type
+          auto message = Message::deserialise(received_data);
+
+          // Create a response message
+          auto response = std::make_unique<BasicMessage>(
+              "Message received by base station", "base");
+
+          // Send response to the sender
+          server.send_data(response->serialise(), server.get_sender_endpoint());
+        } else {
+          std::cout << "[BASE] Received non-JSON message: " << received_data
+                    << std::endl;
+
+          // Echo back for non-JSON messages
+          std::string response = "Received non-JSON: " + received_data;
+          server.send_data(response, server.get_sender_endpoint());
+        }
+      } catch (const std::exception &e) {
+        std::cerr << "[ERROR] Failed to process message: " << e.what()
+                  << std::endl;
+      }
     });
 
-    server.start();
-    io_context.run();
-  } catch (std::exception &e) {
-    std::cerr << "[ERROR] " << e.what() << std::endl;
+  } catch (...) {
   }
-
-  return 0;
 }
 
 void process_commands(UdpServer &server) {
@@ -52,8 +90,8 @@ void process_commands(UdpServer &server) {
       break;
     } else if (line.substr(0, 4) == "send") {
       std::stringstream iss(line.substr(5));
-      std::string ip, message_content;
-      int port;
+      std::string ip{}, message_content{};
+      int port{};
 
       if (iss >> ip >> port) {
         // Read the rest as message content
@@ -66,10 +104,11 @@ void process_commands(UdpServer &server) {
                 std::make_unique<BasicMessage>(message_content, "base-station");
             std::string serialised = message->serialise();
 
-            // send to the ip address
+            // create endpoint
             boost::asio::ip::udp::endpoint rover_endpoint(
                 boost::asio::ip::address::from_string(ip), port);
 
+            // send to endpoint
             server.send_data(serialised, rover_endpoint);
 
             std::cout << "[BASE] Message sent to " << ip << ":" << port

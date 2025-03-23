@@ -14,6 +14,8 @@ public:
   void set_receive_callback(std::function<void(const std::string &)> callback);
   void send_data(const std::string &message, const udp::endpoint &recipient);
 
+  const udp::endpoint get_sender_endpoint();
+
 private:
   void receive_data();
 
