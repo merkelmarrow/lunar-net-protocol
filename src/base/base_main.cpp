@@ -91,6 +91,16 @@ int main(int argc, char *argv[]) {
       }
     });
 
+    // Process user commands
+    print_base_usage();
+    process_commands(server);
+
+    // Clean up
+    io_context.stop();
+    if (io_thread.joinable()) {
+      io_thread.join();
+    }
+
     std::cout << "[BASE] Server stopped." << std::endl;
 
   } catch (const std::exception &error) {
