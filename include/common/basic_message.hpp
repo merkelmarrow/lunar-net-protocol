@@ -5,7 +5,6 @@
 #include "message.hpp"
 #include "timepoint_utils.hpp"
 
-#include <format>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -39,8 +38,17 @@ public:
           "Invalid text message JSON: missing required fields");
     }
 
-    return std::make_unique<BasicMessage>(j["content"].get<std::string>(),
-                                          j["sender"].get<std::string>());
+    auto msg = std::make_unique<BasicMessage>(j["content"].get<std::string>(),
+                                              j["sender"].get<std::string>());
+
+    if (j.contains("timestamp") && j["timestamp"].is_string()) {
+      std::string timestamp_str = j["timestamp"].get<std::string>();
+      std::chrono::system_clock::time_point parsed_time =
+          tp_utils::string_to_tp(timestamp_str);
+      msg->set_timestamp(parsed_time);
+    }
+
+    return msg;
   }
 
   static std::unique_ptr<BasicMessage>
