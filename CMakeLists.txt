@@ -1,17 +1,52 @@
-cmake_minimum_required(VERSION 3.5.0)
+cmake_minimum_required(VERSION 3.8)
 project(lunar-net-protocol VERSION 0.1.0 LANGUAGES C CXX)
 
 # Find dependencies
 find_package(Boost REQUIRED COMPONENTS system)
 
-# Define the source files for the UDP server and main logic
-set(SOURCES
-    main.cpp
-    src/udp_server.cpp
+
+# add later
+### COMMON
+# Common library
+#add_library(common
+#)
+
+# add later
+# Set include directories for the common library
+#target_include_directories(common PUBLIC 
+#    ${CMAKE_SOURCE_DIR}/include/common
+#)
+
+
+### BASE STATION
+# Base station executable
+add_executable(base_station
+    src/base/base_main.cpp
+    src/base/udp_server.cpp
 )
 
-# Create a single executable
-add_executable(lunar-net-protocol ${SOURCES})
+# Set include directories for base_station
+target_include_directories(base_station PRIVATE
+    ${CMAKE_SOURCE_DIR}/include/base
+)
 
-# Link Boost (and other necessary dependencies)
-target_link_libraries(lunar-net-protocol PRIVATE Boost::system)
+# Link base_station with common library and boost
+#target_link_libraries(base_station PRIVATE common)
+target_link_libraries(base_station PRIVATE Boost::system)
+
+# add later
+### ROVER
+# Rover executable
+#add_executable(rover
+#)
+
+# add later
+# Set include directories for moon_rover
+#target_include_directories(rover PRIVATE
+#    ${CMAKE_SOURCE_DIR}/include/rover
+#)
+
+# add later
+# Link moon_rover with common library and Boost
+#target_link_libraries(rover PRIVATE common)
+#target_link_libraries(rover PRIVATE Boost::system)

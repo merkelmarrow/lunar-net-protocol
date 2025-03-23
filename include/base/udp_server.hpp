@@ -1,7 +1,5 @@
-#ifndef UDP_SERVER_HPP
-#define UDP_SERVER_HPP
+#pragma once
 
-#include <iostream>
 #include <boost/asio.hpp>
 #include <functional>
 
@@ -22,5 +20,3 @@ private:
     char buffer_[1024];
     std::function<void(const std::string&)> receive_callback_;
 };
-
-#endif  // UDP_SERVER_HPP

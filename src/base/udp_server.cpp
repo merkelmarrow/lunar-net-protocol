@@ -1,4 +1,5 @@
 #include "udp_server.hpp"
+#include <iostream>
 
 UdpServer::UdpServer(boost::asio::io_context& context, int port)
     : socket_(context, udp::endpoint(udp::v4(), port)) {}
