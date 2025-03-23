@@ -10,6 +10,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 
 using boost::asio::ip::udp;
 
@@ -77,8 +78,27 @@ int main(int argc, char *argv[]) {
       }
     });
 
-  } catch (...) {
+    // start the server
+    std::cout << "[BASE] UDP Server starting on port " << port << "."
+              << std::endl;
+    server.start();
+
+    std::thread io_thread([&io_context]() {
+      try {
+        io_context.run();
+      } catch (const std::exception &error) {
+        std::cerr << "[ERROR] IO Context error: " << error.what() << std::endl;
+      }
+    });
+
+    std::cout << "[BASE] Server stopped." << std::endl;
+
+  } catch (const std::exception &error) {
+    std::cerr << "[FATAL ERROR] " << error.what() << std::endl;
+    return 1;
   }
+
+  return 0;
 }
 
 void process_commands(UdpServer &server) {
