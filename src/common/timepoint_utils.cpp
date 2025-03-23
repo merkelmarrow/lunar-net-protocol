@@ -8,7 +8,7 @@ std::string tp_to_string(const std::chrono::system_clock::time_point &tp) {
   return std::format("{:%FT%T%z}", tp);
 }
 
-std::chrono::system_clock::system_clock::time_point
+std::chrono::system_clock::time_point
 string_to_tp(const std::string &time_str) {
 
   std::istringstream ss(time_str);
