@@ -9,6 +9,6 @@ using boost::asio::ip::udp;
 
 class UdpClient {
 public:
-    UdpClient(boost::asio::io_context& io_context);
-    ~UdpClient();
+  UdpClient(boost::asio::io_context &io_context);
+  ~UdpClient();
 };
