@@ -1,9 +1,12 @@
+// include/common/basic_message.hpp
+
 #pragma once
 
 #include "message.hpp"
-#include <string>
+#include "timepoint_utils.hpp"
 
 #include <format>
+#include <string>
 
 #include <nlohmann/json.hpp>
 
@@ -17,8 +20,8 @@ public:
       : Message(sender), content_(content) {}
 
   std::string serialise() const override {
-    std::string formatted_time = std::format("{:%FT%T%z}", timestamp_);
-    nm::json j = {{"type", get_type()},
+    std::string formatted_time = tp_utils::tp_to_string(timestamp_);
+    nm::json j = {{"msg_type", get_type()},
                   {"content", content_},
                   {"sender", sender_},
                   {"timestamp", formatted_time}};
@@ -39,6 +42,14 @@ public:
     return std::make_unique<BasicMessage>(j["content"].get<std::string>(),
                                           j["sender"].get<std::string>());
   }
+
+  static std::unique_ptr<BasicMessage>
+  create_from_content(const std::string &content, const std::string &sender) {
+    return std::make_unique<BasicMessage>(content, sender);
+  }
+
+  // Getter
+  const std::string &get_content() const { return content_; }
 
 private:
   std::string content_;

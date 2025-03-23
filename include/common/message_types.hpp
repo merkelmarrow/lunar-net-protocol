@@ -1,6 +1,9 @@
+// include/common/message_types.hpp
+
 #pragma once
 
 // include all message headers here
+// not used directly here but required wherever the macro is called
 ////
 #include "basic_message.hpp"
 ////

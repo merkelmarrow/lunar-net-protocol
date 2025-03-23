@@ -39,11 +39,11 @@ std::unique_ptr<Message> Message::deserialise(const std::string &json_str) {
       throw std::runtime_error("Invalid message: missing 'type' field");
     }
 
-    std::string type = j["msg_type"].get<std::string>();
+    std::string msg_type = j["msg_type"].get<std::string>();
 
 // Use X-macro to check each message type
 #define X(MessageType)                                                         \
-  if (type == MessageType::message_type()) {                                   \
+  if (msg_type == MessageType::message_type()) {                               \
     return MessageType::from_json(j);                                          \
   }
 
@@ -52,9 +52,24 @@ std::unique_ptr<Message> Message::deserialise(const std::string &json_str) {
 #undef X
 
         // only reach here if the message type is not one in the registry
-        throw std::runtime_error("Unknown message type: " + type);
+        throw std::runtime_error("Unknown message type: " + msg_type);
   } catch (const nm::json::parse_error &error) {
     throw std::runtime_error(std::string("Failed to parse message: ") +
                              error.what());
   }
+}
+
+std::unique_ptr<Message> Message::create(const std::string &msg_type,
+                                         const std::string &content,
+                                         const std::string &sender) {
+// Use X-macro to check each message type
+#define X(MessageType)                                                         \
+  if (msg_type == MessageType::message_type()) {                               \
+    return MessageType::create_from_content(content, sender);                  \
+  }
+
+  MESSAGE_TYPES_LIST
+#undef X
+
+  throw std::runtime_error("Unknown message type: " + msg_type);
 }

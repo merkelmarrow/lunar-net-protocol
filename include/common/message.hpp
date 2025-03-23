@@ -1,4 +1,4 @@
-// inlude/common/message.hpp
+// include/common/message.hpp
 
 #pragma once
 
@@ -37,6 +37,11 @@ public:
 protected:
   Message(const std::string &sender)
       : sender_(sender), timestamp_(std::chrono::system_clock::now()) {}
+
+  // allow derived classes to set the timestamp for deserialising
+  void set_timestamp(const std::chrono::system_clock::time_point &timestamp) {
+    timestamp_ = timestamp;
+  };
 
   // fields for all messages
   std::string sender_;
