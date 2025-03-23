@@ -4,17 +4,28 @@ project(lunar-net-protocol VERSION 0.1.0 LANGUAGES C CXX)
 # Find dependencies
 find_package(Boost REQUIRED COMPONENTS system)
 
+# Enable fetching content from internet to fetch json lib
+include(FetchContent)
+FetchContent_Declare(
+    json
+    GIT_REPOSITORY "https://github.com/nlohmann/json"
+    GIT_TAG "v3.11.3"
+    FIND_PACKAGE_ARGS NAMES json)
+FetchContent_MakeAvailable(json)
+
 
 ### COMMON
 # Common library
 add_library(common
     include/common/configs.hpp
+    src/common/message.cpp
 )
 
 target_include_directories(common PUBLIC
     ${CMAKE_SOURCE_DIR}/include/common
 )
 
+target_link_libraries(common PRIVATE nlohmann_json::nlohmann_json)
 
 ### BASE STATION
 # Base station executable
