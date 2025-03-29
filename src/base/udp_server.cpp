@@ -9,6 +9,9 @@ UdpServer::UdpServer(boost::asio::io_context &context, int port)
 UdpServer::~UdpServer() { stop(); }
 
 void UdpServer::start() {
+  if (running_)
+    return;
+
   std::cout << "[SERVER] UDP Server is running..." << std::endl;
   running_ = true;
   receive_data();
@@ -50,39 +53,51 @@ void UdpServer::receive_data() {
   if (!running_)
     return;
 
-  socket_.async_receive_from(
-      boost::asio::buffer(buffer_), sender_endpoint_,
-      [this](boost::system::error_code ec, std::size_t length) {
-        if (!ec && running_) {
-          // convert the received data to a vector of bytes
-          std::vector<uint8_t> received_data(buffer_.data(),
-                                             buffer_.data() + length);
+  // define the receive handler function type
+  using receive_handler_t =
+      std::function<void(const boost::system::error_code &, std::size_t)>;
 
-          // create local copies to avoid data races
-          udp::endpoint endpoint_copy;
-          std::function<void(const std::vector<uint8_t> &,
-                             const udp::endpoint &)>
-              callback_copy;
+  // create a shared pointer to the handler so it can reference itself
+  auto handler = std::make_shared<receive_handler_t>();
 
-          {
-            std::lock_guard<std::mutex> endpoint_lock(endpoint_mutex_);
-            endpoint_copy = sender_endpoint_;
-          }
+  // define the actual handler
+  *handler = [this, handler](const boost::system::error_code &ec,
+                             std::size_t length) {
+    if (!ec && running_) {
+      // convert the received data to a vector of uint8_t
+      std::vector<uint8_t> received_data(buffer_.data(),
+                                         buffer_.data() + length);
 
-          {
-            std::lock_guard<std::mutex> callback_lock(callback_mutex_);
-            callback_copy = receive_callback_;
-          }
+      // create local copies to avoid data races
+      udp::endpoint endpoint_copy;
+      std::function<void(const std::vector<uint8_t> &, const udp::endpoint &)>
+          callback_copy;
 
-          if (callback_copy) {
-            callback_copy(received_data, endpoint_copy);
-          }
-        }
+      {
+        std::lock_guard<std::mutex> endpoint_lock(endpoint_mutex_);
+        endpoint_copy = sender_endpoint_;
+      }
 
-        if (running_) {
-          receive_data(); // continue listening only if still running
-        }
-      });
+      {
+        std::lock_guard<std::mutex> callback_lock(callback_mutex_);
+        callback_copy = receive_callback_;
+      }
+
+      if (callback_copy) {
+        callback_copy(received_data, endpoint_copy);
+      }
+    }
+
+    // post the next receive operation if still running
+    if (running_) {
+      socket_.async_receive_from(boost::asio::buffer(buffer_), sender_endpoint_,
+                                 *handler);
+    }
+  };
+
+  // start the initial receive operation
+  socket_.async_receive_from(boost::asio::buffer(buffer_), sender_endpoint_,
+                             *handler);
 }
 
 const udp::endpoint UdpServer::get_sender_endpoint() {

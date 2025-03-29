@@ -34,14 +34,19 @@ public:
   // message is the data to send
   // the method throws boost::system::system_error if the async operation fails
   // to start
-  void send_data(const std::string &message);
+  void send_data(const std::vector<uint8_t> &data);
 
   // sets the callback to receive messages
   // the callback function will be called whenever a message is received
   // the callback should handle/process the message string
-  void set_receive_callback(std::function<void(const std::string &)> callback);
+  void set_receive_callback(
+      std::function<void(const std::vector<uint8_t> &)> callback);
 
   void start_receive();
+  void stop_receive();
+
+  // get current base endpoint
+  const udp::endpoint &get_base_endpoint() const;
 
 private:
   void handle_receive(const boost::system::error_code &error,
@@ -51,8 +56,8 @@ private:
   udp::socket socket_;
   udp::endpoint base_endpoint_;
   std::array<char, CLIENT_SOCK_BUF_SIZE> receive_buffer_;
-  std::function<void(const std::string &)> receive_callback_;
+  std::function<void(const std::vector<uint8_t> &)> receive_callback_;
   bool running_;
 
-  std::mutex callback_mutex_; // Add mutex for callback protection
+  std::mutex callback_mutex_;
 };
