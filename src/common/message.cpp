@@ -14,7 +14,7 @@ namespace nm = nlohmann;
 
 bool Message::is_valid_json(const std::string &json_str) {
   try {
-    nm::json::parse(json_str);
+    auto result = nm::json::parse(json_str);
     return true;
   } catch (const nm::json::parse_error &) {
     return false;
