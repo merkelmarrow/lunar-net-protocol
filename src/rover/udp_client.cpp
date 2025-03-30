@@ -7,6 +7,7 @@
 #include <iostream>
 
 #include <boost/asio/io_context.hpp>
+#include <stdexcept>
 
 #include "udp_client.hpp"
 
@@ -36,6 +37,13 @@ void UdpClient::register_base(const std::string &host, int port) {
 }
 
 void UdpClient::send_data(const std::vector<uint8_t> &data) {
+  if (base_endpoint_.address().is_unspecified()) {
+    std::cerr << "[ERROR] Base endpoint is not initialised. Call "
+                 "register_base() first."
+              << std::endl;
+    throw std::runtime_error("Base endpoint not initialised");
+  }
+
   try {
     socket_.async_send_to(
         boost::asio::buffer(data), base_endpoint_,
