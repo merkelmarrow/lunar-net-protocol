@@ -263,11 +263,15 @@ void LumenProtocol::send_packet(const LumenPacket &packet,
   // serialize packet to bytes
   std::vector<uint8_t> data = packet.to_bytes();
 
-  // send via the appropriate transport layer
-  if (mode_ == Mode::SERVER) {
-    server_->send_data(data, recipient);
-  } else {
-    client_->send_data(data);
+  try {
+    // send with appropriate mode
+    if (mode_ == Mode::SERVER) {
+      server_->send_data(data, recipient);
+    } else {
+      client_->send_data(data);
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "[ERROR] Failed to send packet: " << e.what() << std::endl;
   }
 }
 
