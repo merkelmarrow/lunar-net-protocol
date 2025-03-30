@@ -1,6 +1,7 @@
 // src/common/reliability_manager.cpp
 
 #include "reliability_manager.hpp"
+#include "lumen_header.hpp"
 #include "lumen_packet.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/system/detail/error_category.hpp>
@@ -142,4 +143,29 @@ void ReliabilityManager::record_received_sequence(uint8_t seq) {
       next_expected_sequence_++;
     }
   }
+}
+
+LumenPacket
+ReliabilityManager::generate_sack_packet(uint8_t next_expected_seq) {
+  std::lock_guard<std::mutex> lock(received_sequences_mutex_);
+
+  // find missing sequences in the window
+  std::vector<uint8_t> missing_seqs;
+
+  // look for gaps in a window of 32 sequences
+  for (uint8_t i = 0; i < 32; i++) {
+    uint8_t seq = static_cast<uint8_t>(next_expected_seq - 32 + i);
+
+    if (received_sequences_.find(seq) == received_sequences_.end()) {
+      missing_seqs.push_back(seq);
+    }
+  }
+
+  // create a sack header
+  LumenHeader header(LumenHeader::MessageType::SACK,
+                     LumenHeader::Priority::HIGH, next_expected_seq,
+                     0, // timestamp 0 for SACK
+                     missing_seqs.size());
+
+  return LumenPacket(header, missing_seqs);
 }
