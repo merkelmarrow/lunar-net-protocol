@@ -75,11 +75,8 @@ void UdpServer::receive_data() {
 
       {
         std::lock_guard<std::mutex> endpoint_lock(endpoint_mutex_);
-        endpoint_copy = sender_endpoint_;
-      }
-
-      {
         std::lock_guard<std::mutex> callback_lock(callback_mutex_);
+        endpoint_copy = sender_endpoint_;
         callback_copy = receive_callback_;
       }
 
