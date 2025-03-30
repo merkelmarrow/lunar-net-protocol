@@ -109,7 +109,7 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
 
     // continue listening if still running
     if (running_) {
-      start_receive();
+      do_receive();
     }
   } else if (error != boost::asio::error::operation_aborted && running_) {
     std::cerr << "[ERROR] Receive error: " << error.message() << std::endl;
