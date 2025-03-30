@@ -8,9 +8,7 @@
 #include "message.hpp"
 #include "message_types.hpp"
 
-namespace {
 namespace nm = nlohmann;
-}
 
 bool Message::is_valid_json(const std::string &json_str) {
   try {
@@ -75,14 +73,33 @@ std::unique_ptr<Message> Message::deserialise(const std::string &json_str) {
 std::unique_ptr<Message> Message::create(const std::string &msg_type,
                                          const std::string &content,
                                          const std::string &sender) {
-// Use X-macro to check each message type
-#define X(MessageType)                                                         \
-  if (msg_type == MessageType::message_type()) {                               \
-    return MessageType::create_from_content(content, sender);                  \
-  }
 
-  MESSAGE_TYPES_LIST
-#undef X
+  if (msg_type == BasicMessage::message_type()) {
+    return BasicMessage::create_from_content(content, sender);
+  } else if (msg_type == CommandMessage::message_type()) {
+    // parse content as command and params
+    size_t delimiter_pos = content.find(':');
+    std::string command, params;
+
+    if (delimiter_pos != std::string::npos) {
+      command = content.substr(0, delimiter_pos);
+      params = content.substr(delimiter_pos + 1);
+    } else {
+      command = content;
+      params = "";
+    }
+
+    return CommandMessage::create_from_content(command, params, sender);
+  } else if (msg_type == StatusMessage::message_type()) {
+    // default to NOMINAL status if not specified
+    return StatusMessage::create_from_content(StatusMessage::StatusLevel::OK,
+                                              content, sender);
+  } else if (msg_type == TelemetryMessage::message_type()) {
+    // for telemetry, we need a proper map, but can't parse arbitrary content
+    // default to empty readings
+    std::map<std::string, double> empty_readings;
+    return TelemetryMessage::create_from_content(empty_readings, sender);
+  }
 
   throw std::runtime_error("Unknown message type: " + msg_type);
 }

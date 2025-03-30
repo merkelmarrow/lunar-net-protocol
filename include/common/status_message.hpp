@@ -15,7 +15,7 @@ namespace nm = nlohmann;
 
 class StatusMessage : public Message {
 public:
-  enum class StatusLevel { NOMINAL, WARNING, ERROR, CRITICAL };
+  enum class StatusLevel { OK, WARNING, ERROR, CRITICAL };
 
   StatusMessage(StatusLevel level, const std::string &description,
                 const std::string &sender)
@@ -27,8 +27,8 @@ public:
     // convert enum to string
     std::string level_str;
     switch (level_) {
-    case StatusLevel::NOMINAL:
-      level_str = "NOMINAL";
+    case StatusLevel::OK:
+      level_str = "OK";
       break;
     case StatusLevel::WARNING:
       level_str = "WARNING";
@@ -54,7 +54,7 @@ public:
   LumenHeader::Priority get_lumen_priority() const override {
     // priority based on status level
     switch (level_) {
-    case StatusLevel::NOMINAL:
+    case StatusLevel::OK:
       return LumenHeader::Priority::LOW;
     case StatusLevel::WARNING:
       return LumenHeader::Priority::MEDIUM;
@@ -83,8 +83,8 @@ public:
     // convert string to enum
     std::string level_str = j["level"].get<std::string>();
     StatusLevel level;
-    if (level_str == "NOMINAL")
-      level = StatusLevel::NOMINAL;
+    if (level_str == "OK")
+      level = StatusLevel::OK;
     else if (level_str == "WARNING")
       level = StatusLevel::WARNING;
     else if (level_str == "ERROR")
