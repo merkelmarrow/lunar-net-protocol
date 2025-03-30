@@ -142,7 +142,8 @@ void ReliabilityManager::record_received_sequence(uint8_t seq) {
     // find the next gap
     while (received_sequences_.find(next_expected_sequence_) !=
            received_sequences_.end()) {
-      next_expected_sequence_++;
+      next_expected_sequence_ =
+          (next_expected_sequence_ + 1) & 0xFF; // wrapping
     }
   }
 }
