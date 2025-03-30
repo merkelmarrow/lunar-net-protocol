@@ -34,6 +34,7 @@ public:
 
   static std::optional<LumenHeader>
   from_bytes(const std::vector<uint8_t> &bytes);
+  std::vector<uint8_t> to_bytes() const;
 
   static constexpr size_t STX_POS = 0;
   static constexpr size_t TYPE_POS = 1;

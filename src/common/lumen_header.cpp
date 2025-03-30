@@ -43,3 +43,31 @@ LumenHeader::from_bytes(const std::vector<uint8_t> &bytes) {
   // create and return the header
   return LumenHeader(type, priority, sequence, timestamp, payload_length);
 }
+
+// serialise to bytes
+std::vector<uint8_t> LumenHeader::to_bytes() const {
+  std::vector<uint8_t> bytes(HEADER_SIZE);
+
+  // start with transmission byte
+  bytes[STX_POS] = STX;
+
+  // message type
+  bytes[TYPE_POS] = static_cast<uint8_t>(type_);
+
+  // priority
+  bytes[PRIO_POS] = static_cast<uint8_t>(priority_);
+
+  // sequence number
+  bytes[SEQ_POS] = sequence_;
+
+  // timestamp (4 bytes, big-endian)
+  bytes[TIMESTAMP_POS] = (timestamp_ >> 24) & 0xFF;
+  bytes[TIMESTAMP_POS + 1] = (timestamp_ >> 16) & 0xFF;
+  bytes[TIMESTAMP_POS + 2] = (timestamp_ >> 8) & 0xFF;
+  bytes[TIMESTAMP_POS + 3] = timestamp_ & 0xFF;
+
+  // payload length
+  bytes[LEN_POS] = payload_length_;
+
+  return bytes;
+}
