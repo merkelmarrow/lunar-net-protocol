@@ -71,3 +71,21 @@ std::vector<uint8_t> LumenHeader::to_bytes() const {
 
   return bytes;
 }
+
+// CRC-8 calculation
+uint8_t LumenHeader::calculate_crc8(const std::vector<uint8_t> &data) {
+  uint8_t crc = 0;
+
+  for (uint8_t byte : data) {
+    crc ^= byte;
+    for (int i = 0; i < 8; i++) {
+      if (crc & 0x80) {
+        crc = (crc << 1) ^ 0x07; // polynomial x^8 + x^2 + x + 1
+      } else {
+        crc <<= 1;
+      }
+    }
+  }
+
+  return crc;
+}
