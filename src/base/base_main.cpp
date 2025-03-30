@@ -48,29 +48,40 @@ int main(int argc, char *argv[]) {
     UdpServer server(io_context, port);
 
     // Set the callback to process incoming messages
-    server.set_receive_callback([&server](const std::string &received_data) {
+    server.set_receive_callback([&server](
+                                    const std::vector<uint8_t> &received_data,
+                                    const udp::endpoint &sender) {
       try {
+        // Convert binary data to string
+        std::string received_str(received_data.begin(), received_data.end());
+
         // Try to deserialize the message
-        if (Message::is_valid_json(received_data)) {
+        if (Message::is_valid_json(received_str)) {
           std::cout << "[BASE] Received JSON message:" << std::endl;
-          std::cout << Message::pretty_print(received_data) << std::endl;
+          std::cout << Message::pretty_print(received_str) << std::endl;
 
           // Deserialize to proper message type
-          auto message = Message::deserialise(received_data);
+          auto message = Message::deserialise(received_str);
 
           // Create a response message
           auto response = std::make_unique<BasicMessage>(
               "Message received by base station", "base");
 
-          // Send response to the sender
-          server.send_data(response->serialise(), server.get_sender_endpoint());
+          // Convert response to binary and send
+          std::string response_str = response->serialise();
+          std::vector<uint8_t> response_data(response_str.begin(),
+                                             response_str.end());
+
+          server.send_data(response_data, sender);
         } else {
-          std::cout << "[BASE] Received non-JSON message: " << received_data
+          std::cout << "[BASE] Received non-JSON message: " << received_str
                     << std::endl;
 
           // Echo back for non-JSON messages
-          std::string response = "Received non-JSON: " + received_data;
-          server.send_data(response, server.get_sender_endpoint());
+          std::string response = "Received non-JSON: " + received_str;
+          std::vector<uint8_t> response_data(response.begin(), response.end());
+
+          server.send_data(response_data, sender);
         }
       } catch (const std::exception &e) {
         std::cerr << "[ERROR] Failed to process message: " << e.what()
@@ -78,7 +89,6 @@ int main(int argc, char *argv[]) {
       }
     });
 
-    // start the server
     std::cout << "[BASE] UDP Server starting on port " << port << "."
               << std::endl;
     server.start();
@@ -134,12 +144,15 @@ void process_commands(UdpServer &server) {
                 std::make_unique<BasicMessage>(message_content, "base-station");
             std::string serialised = message->serialise();
 
+            // Convert to binary data
+            std::vector<uint8_t> data(serialised.begin(), serialised.end());
+
             // create endpoint
             boost::asio::ip::udp::endpoint rover_endpoint(
                 boost::asio::ip::address::from_string(ip), port);
 
             // send to endpoint
-            server.send_data(serialised, rover_endpoint);
+            server.send_data(data, rover_endpoint);
 
             std::cout << "[BASE] Message sent to " << ip << ":" << port
                       << std::endl;
