@@ -87,3 +87,28 @@ std::vector<uint8_t> LumenPacket::to_bytes() const {
 
   return packet;
 }
+
+size_t LumenPacket::total_size() const {
+  // header size + payload size + 1 for CRC + 1 fro ETX
+  return LumenHeader::HEADER_SIZE + payload_.size() + 2;
+}
+
+bool LumenPacket::is_valid() const {
+  std::vector<uint8_t> packet_data = to_bytes();
+  if (packet_data.size() < LumenHeader::HEADER_SIZE + 2) {
+    return false;
+  }
+
+  if (packet_data.back() != LumenHeader::ETX) {
+    return false;
+  }
+
+  // verify the crc checksum
+  size_t crc_pos = get_crc_position(packet_data);
+  std::vector<uint8_t> data_for_crc(packet_data.begin(),
+                                    packet_data.begin() + crc_pos);
+
+  uint8_t calculated_crc = LumenHeader::calculate_crc8(data_for_crc);
+  uint8_t stored_crc = packet_data[crc_pos];
+  return calculated_crc == stored_crc;
+}
