@@ -36,6 +36,18 @@ public:
   from_bytes(const std::vector<uint8_t> &bytes);
   std::vector<uint8_t> to_bytes() const;
 
+  // accessors
+  MessageType get_type() const;
+  Priority get_priority() const;
+  uint8_t get_sequence() const;
+  uint32_t get_timestamp() const;
+  uint8_t get_payload_length() const;
+
+  // mutators
+  void set_sequence(uint8_t seq);
+  void set_timestamp(uint32_t timestamp);
+  void set_payload_length(uint8_t length);
+
   static constexpr size_t STX_POS = 0;
   static constexpr size_t TYPE_POS = 1;
   static constexpr size_t PRIO_POS = 2;

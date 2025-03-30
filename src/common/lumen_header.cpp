@@ -89,3 +89,23 @@ uint8_t LumenHeader::calculate_crc8(const std::vector<uint8_t> &data) {
 
   return crc;
 }
+
+// accessors
+LumenHeader::MessageType LumenHeader::get_type() const { return type_; }
+
+LumenHeader::Priority LumenHeader::get_priority() const { return priority_; }
+
+uint8_t LumenHeader::get_sequence() const { return sequence_; }
+
+uint32_t LumenHeader::get_timestamp() const { return timestamp_; }
+
+uint8_t LumenHeader::get_payload_length() const { return payload_length_; }
+
+// mutators
+void LumenHeader::set_sequence(uint8_t seq) { sequence_ = seq; }
+
+void LumenHeader::set_timestamp(uint32_t timestamp) { timestamp_ = timestamp; }
+
+void LumenHeader::set_payload_length(uint8_t length) {
+  payload_length_ = length;
+}

@@ -25,6 +25,8 @@ add_library(common
     src/common/timepoint_utils.cpp
     include/common/basic_message.hpp
     include/common/message_types.hpp
+    src/common/lumen_packet.cpp
+    src/common/lumen_header.cpp
 )
 
 target_include_directories(common PUBLIC
