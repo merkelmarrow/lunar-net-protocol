@@ -18,8 +18,8 @@ constexpr size_t LUMEN_PRIO_POS = 2;
 constexpr size_t LUMEN_SEQ_POS = 3;
 constexpr size_t LUMEN_TIMESTAMP_POS = 4;
 constexpr size_t LUMEN_LEN_POS = 8;
-constexpr size_t LUMEN_PAYLOAD_POS = 9;
-constexpr size_t LUMEN_HEADER_SIZE = 9;
+constexpr size_t LUMEN_PAYLOAD_POS = 10;
+constexpr size_t LUMEN_HEADER_SIZE = 10;
 
 constexpr int RELIABILITY_MAX_RETRIES = 5;
 constexpr std::chrono::milliseconds RELIABILITY_BASE_TIMEOUT{5000};

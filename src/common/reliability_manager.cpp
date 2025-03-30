@@ -172,7 +172,7 @@ ReliabilityManager::generate_sack_packet(uint8_t next_expected_seq) {
   LumenHeader header(LumenHeader::MessageType::SACK,
                      LumenHeader::Priority::HIGH, next_expected_seq,
                      0, // timestamp 0 for SACK
-                     missing_seqs.size());
+                     static_cast<uint16_t>(missing_seqs.size()));
 
   return LumenPacket(header, missing_seqs);
 }

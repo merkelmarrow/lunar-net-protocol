@@ -5,7 +5,7 @@
 #include "configs.hpp"
 
 LumenHeader::LumenHeader(MessageType type, Priority prio, uint8_t seq,
-                         uint32_t timestamp, uint8_t payload_length)
+                         uint32_t timestamp, uint16_t payload_length)
     : type_(type), priority_(prio), sequence_(seq), timestamp_(timestamp),
       payload_length_(payload_length) {}
 
@@ -34,8 +34,10 @@ LumenHeader::from_bytes(const std::vector<uint8_t> &bytes) {
   timestamp |= static_cast<uint32_t>(bytes[LUMEN_TIMESTAMP_POS + 2]) << 8;
   timestamp |= static_cast<uint32_t>(bytes[LUMEN_TIMESTAMP_POS + 3]);
 
-  // get payload length
-  uint8_t payload_length = bytes[LUMEN_LEN_POS];
+  // get payload length from two bytes (big-endian)
+  uint16_t payload_length = 0;
+  payload_length |= static_cast<uint16_t>(bytes[LUMEN_LEN_POS]) << 8;
+  payload_length |= static_cast<uint16_t>(bytes[LUMEN_LEN_POS + 1]);
 
   // validate message type and priority
   if (static_cast<uint8_t>(type) > 5 || static_cast<uint8_t>(priority) > 2) {
@@ -68,8 +70,9 @@ std::vector<uint8_t> LumenHeader::to_bytes() const {
   bytes[LUMEN_TIMESTAMP_POS + 2] = (timestamp_ >> 8) & 0xFF;
   bytes[LUMEN_TIMESTAMP_POS + 3] = timestamp_ & 0xFF;
 
-  // payload length
-  bytes[LUMEN_LEN_POS] = payload_length_;
+  // payload length (2 bytes, big-endian)
+  bytes[LUMEN_LEN_POS] = (payload_length_ >> 8) & 0xFF;
+  bytes[LUMEN_LEN_POS + 1] = payload_length_ & 0xFF;
 
   return bytes;
 }
@@ -101,13 +104,13 @@ uint8_t LumenHeader::get_sequence() const { return sequence_; }
 
 uint32_t LumenHeader::get_timestamp() const { return timestamp_; }
 
-uint8_t LumenHeader::get_payload_length() const { return payload_length_; }
+uint16_t LumenHeader::get_payload_length() const { return payload_length_; }
 
 // mutators
 void LumenHeader::set_sequence(uint8_t seq) { sequence_ = seq; }
 
 void LumenHeader::set_timestamp(uint32_t timestamp) { timestamp_ = timestamp; }
 
-void LumenHeader::set_payload_length(uint8_t length) {
+void LumenHeader::set_payload_length(uint16_t length) {
   payload_length_ = length;
 }

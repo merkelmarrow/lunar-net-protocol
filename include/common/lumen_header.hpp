@@ -28,7 +28,7 @@ public:
 
   // constructor
   LumenHeader(MessageType type, Priority prio, uint8_t seq, uint32_t timestamp,
-              uint8_t payload_length);
+              uint16_t payload_length);
 
   static std::optional<LumenHeader>
   from_bytes(const std::vector<uint8_t> &bytes);
@@ -39,12 +39,12 @@ public:
   Priority get_priority() const;
   uint8_t get_sequence() const;
   uint32_t get_timestamp() const;
-  uint8_t get_payload_length() const;
+  uint16_t get_payload_length() const;
 
   // mutators
   void set_sequence(uint8_t seq);
   void set_timestamp(uint32_t timestamp);
-  void set_payload_length(uint8_t length);
+  void set_payload_length(uint16_t length);
 
   static uint8_t calculate_crc8(const std::vector<uint8_t> &data);
 
@@ -53,5 +53,5 @@ private:
   Priority priority_;
   uint8_t sequence_;
   uint32_t timestamp_;
-  uint8_t payload_length_;
+  uint16_t payload_length_;
 };
