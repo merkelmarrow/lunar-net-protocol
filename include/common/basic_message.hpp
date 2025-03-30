@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "lumen_header.hpp"
 #include "message.hpp"
 #include "timepoint_utils.hpp"
 
@@ -28,6 +29,14 @@ public:
   }
 
   std::string get_type() const override { return message_type(); }
+
+  LumenHeader::Priority get_lumen_priority() const override {
+    return LumenHeader::Priority::MEDIUM; // default
+  }
+
+  LumenHeader::MessageType get_lumen_type() const override {
+    return LumenHeader::MessageType::DATA;
+  }
 
   // Static methods needed for factory
   static std::string message_type() { return "BasicMessage"; }

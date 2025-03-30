@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "lumen_header.hpp"
 #include <chrono>
 #include <memory>
 #include <string>
@@ -33,6 +34,9 @@ public:
   static std::unique_ptr<Message> create(const std::string &type,
                                          const std::string &content,
                                          const std::string &sender);
+
+  virtual LumenHeader::Priority get_lumen_priority() const = 0;
+  virtual LumenHeader::MessageType get_lumen_type() const = 0;
 
 protected:
   Message(const std::string &sender)
