@@ -5,6 +5,7 @@
 #include "lumen_packet.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/system/detail/error_category.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -224,4 +225,37 @@ void ReliabilityManager::set_retransmit_callback(
   std::lock_guard<std::mutex> lock(callback_mutex_);
 
   retransmit_callback_ = std::move(callback);
+}
+
+// handle retransmission timer
+void ReliabilityManager::handle_retransmission_timer() {
+  if (!running_) {
+    return;
+  }
+
+  // get packets that need retransmission
+  auto packets = get_packets_to_retransmit();
+
+  // get a copy of retransmit callback for thread safety
+  std::function<void(const LumenPacket &, const udp::endpoint &)> callback_copy;
+
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    callback_copy = retransmit_callback_;
+  }
+
+  // retransmit packets
+  if (callback_copy) {
+    for (const auto &[packet, endpoint] : packets) {
+      callback_copy(packet, endpoint);
+    }
+  }
+
+  // reschedule timer
+  retransmit_timer_.expires_at(retransmit_timer_.expiry() + CHECK_INTERVAL);
+  retransmit_timer_.async_wait([this](const boost::system::error_code &error) {
+    if (!error && running_) {
+      handle_retransmission_timer();
+    }
+  });
 }
