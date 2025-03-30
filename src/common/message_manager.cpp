@@ -3,7 +3,9 @@
 #include "message_manager.hpp"
 #include "lumen_header.hpp"
 #include "message.hpp"
+#include <exception>
 #include <iostream>
+#include <mutex>
 #include <vector>
 
 MessageManager::MessageManager(boost::asio::io_context &io_context,
@@ -62,4 +64,44 @@ void MessageManager::send_message(const Message &message,
 
   std::cout << "[MESSAGE MANAGER] Sent message type: " << message.get_type()
             << " to " << recipient << std::endl;
+}
+
+void MessageManager::set_message_callback(
+    std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>
+        callback) {
+  std::lock_guard<std::mutex> lock(callback_mutex_);
+  message_callback_ = std::move(callback);
+}
+
+void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
+                                          const LumenHeader &header,
+                                          const udp::endpoint &sender) {
+  try {
+    // convert binary to string
+    std::string json_str = binary_to_string(payload);
+
+    // check if it's a valid json msg
+    if (!Message::is_valid_json(json_str)) {
+      std::cerr << "[ERROR] Received invalid JSON message." << std::endl;
+      return;
+    }
+
+    // deserialise into the appropriate message type
+    auto message = Message::deserialise(json_str);
+
+    // call the callback if it's been set
+    std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>
+        callback_copy;
+    {
+      std::lock_guard<std::mutex> lock(callback_mutex_);
+      callback_copy = message_callback_;
+    }
+
+    if (callback_copy) {
+      callback_copy(std::move(message), sender);
+    }
+  } catch (const std::exception &error) {
+    std::cerr << "[ERROR] Failed to process message: " << error.what()
+              << std::endl;
+  }
 }
