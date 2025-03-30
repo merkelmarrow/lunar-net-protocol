@@ -66,13 +66,7 @@ void UdpClient::start_receive() {
     return;
 
   running_ = true;
-
-  socket_.async_receive_from(boost::asio::buffer(receive_buffer_),
-                             base_endpoint_,
-                             [this](const boost::system::error_code &error,
-                                    std::size_t bytes_transferred) {
-                               handle_receive(error, bytes_transferred);
-                             });
+  do_receive(); // call the helper method
 }
 
 void UdpClient::stop_receive() {
@@ -130,4 +124,16 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
       }
     });
   }
+}
+
+void UdpClient::do_receive() {
+  if (!running_)
+    return;
+
+  socket_.async_receive_from(boost::asio::buffer(receive_buffer_),
+                             base_endpoint_,
+                             [this](const boost::system::error_code &error,
+                                    std::size_t bytes_transferred) {
+                               handle_receive(error, bytes_transferred);
+                             });
 }

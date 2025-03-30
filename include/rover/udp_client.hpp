@@ -59,5 +59,7 @@ private:
   std::function<void(const std::vector<uint8_t> &)> receive_callback_;
   bool running_;
 
+  void do_receive();
+
   std::mutex callback_mutex_;
 };
