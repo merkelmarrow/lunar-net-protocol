@@ -68,3 +68,22 @@ LumenPacket::from_bytes(const std::vector<uint8_t> &bytes) {
 
   return packet;
 }
+
+const LumenHeader &LumenPacket::get_header() const { return header_; }
+
+const std::vector<uint8_t> &LumenPacket::get_payload() const {
+  return payload_;
+}
+
+std::vector<uint8_t> LumenPacket::to_bytes() const {
+  // start with the header bytes
+  std::vector<uint8_t> packet = header_.to_bytes();
+
+  // add payload
+  packet.insert(packet.end(), payload_.begin(), payload_.end());
+
+  // add ETX
+  packet.push_back(LumenHeader::ETX);
+
+  return packet;
+}

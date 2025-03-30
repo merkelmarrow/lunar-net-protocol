@@ -15,8 +15,10 @@ public:
   // parse packet from raw bytes
   static std::optional<LumenPacket>
   from_bytes(const std::vector<uint8_t> &bytes);
-
   std::vector<uint8_t> to_bytes() const;
+
+  const LumenHeader &get_header() const;
+  const std::vector<uint8_t> &get_payload() const;
 
   bool is_valid() const;
 

@@ -2,6 +2,7 @@
 
 #include "message_manager.hpp"
 #include "message.hpp"
+#include <iostream>
 
 MessageManager::MessageManager(boost::asio::io_context &io_context,
                                LumenProtocol &protocol,

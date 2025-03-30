@@ -1,7 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <boost/asio.hpp>
 #include <boost/asio/io_context.hpp>
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "../base/udp_server.hpp"
@@ -9,6 +12,7 @@
 
 #include "lumen_header.hpp"
 #include "lumen_packet.hpp"
+#include "reliability_manager.hpp"
 
 using boost::asio::ip::udp;
 
@@ -70,4 +74,30 @@ private:
   UdpClient *client_;
 
   // frame buffer for reassembly
+  std::vector<uint8_t> frame_buffer_;
+
+  // sequence number management
+  std::atomic<uint8_t> current_sequence_;
+
+  // reliability management
+  std::unique_ptr<ReliabilityManager> reliability_manager_;
+
+  // callback for received messages
+  std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
+                     const udp::endpoint &)>
+      message_callback_;
+
+  std::mutex buffer_mutex_;
+  std::mutex callback_mutex_;
+
+  bool send_acks_;
+  bool use_sack_;
+
+  bool running_;
+
+  // IO context reference
+  boost::asio::io_context &io_context_;
+
+  // Endpoint tracking for frame buffer
+  udp::endpoint buffer_sender_endpoint_;
 };
