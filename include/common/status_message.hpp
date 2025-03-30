@@ -9,9 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace {
 namespace nm = nlohmann;
-}
 
 class StatusMessage : public Message {
 public:

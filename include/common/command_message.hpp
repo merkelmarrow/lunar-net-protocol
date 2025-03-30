@@ -9,9 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace {
 namespace nm = nlohmann;
-}
 
 class CommandMessage : public Message {
 public:
@@ -39,7 +37,7 @@ public:
     return LumenHeader::MessageType::CMD;
   }
 
-  // Static methods needed for factory
+  // static methods needed for factory
   static std::string message_type() { return "CommandMessage"; }
 
   static std::unique_ptr<CommandMessage> from_json(const nm::json &j) {

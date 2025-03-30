@@ -10,9 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace {
 namespace nm = nlohmann;
-}
 
 class TelemetryMessage : public Message {
 public:
