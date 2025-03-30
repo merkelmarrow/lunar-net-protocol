@@ -252,10 +252,13 @@ void ReliabilityManager::handle_retransmission_timer() {
   }
 
   // reschedule timer
-  retransmit_timer_.expires_at(retransmit_timer_.expiry() + CHECK_INTERVAL);
-  retransmit_timer_.async_wait([this](const boost::system::error_code &error) {
-    if (!error && running_) {
-      handle_retransmission_timer();
-    }
-  });
+  if (running_) {
+    retransmit_timer_.expires_at(retransmit_timer_.expiry() + CHECK_INTERVAL);
+    retransmit_timer_.async_wait(
+        [this](const boost::system::error_code &error) {
+          if (!error && running_) {
+            handle_retransmission_timer();
+          }
+        });
+  }
 }
