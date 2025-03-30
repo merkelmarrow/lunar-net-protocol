@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <iostream>
 #include <mutex>
+#include <vector>
 
 ReliabilityManager::ReliabilityManager(boost::asio::io_context &io_context)
     : next_expected_sequence_(0), retransmit_timer_(io_context, CHECK_INTERVAL),
@@ -168,4 +169,51 @@ ReliabilityManager::generate_sack_packet(uint8_t next_expected_seq) {
                      missing_seqs.size());
 
   return LumenPacket(header, missing_seqs);
+}
+
+// get messages that need retransmission
+std::vector<std::pair<LumenPacket, udp::endpoint>>
+ReliabilityManager::get_packets_to_retransmit() {
+  std::lock_guard<std::mutex> lock(sent_packets_mutex_);
+
+  std::vector<std::pair<LumenPacket, udp::endpoint>> packets_to_retransmit;
+
+  auto now = std::chrono::steady_clock::now();
+
+  for (auto it = sent_packets_.begin(); it != sent_packets_.end();) {
+    auto &info = it->second;
+
+    // calculate time since transmission
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - info.sent_time);
+
+    // calculate timeout based on retry count (exponential backoff)
+    auto timeout = BASE_TIMEOUT * (1 << info.retry_count);
+
+    if (elapsed > timeout) {
+      if (info.retry_count >= MAX_RETRIES) {
+        std::cout << "[RELIABILITY] Max retries reached for seq: "
+                  << static_cast<int>(it->first) << ", giving up." << std::endl;
+
+        // stop tracking
+        it = sent_packets_.erase(it);
+        continue;
+      }
+
+      // add to retransmission list
+      packets_to_retransmit.push_back({info.packet, info.recipient});
+
+      // update sent time and retry count
+      info.sent_time = now;
+      info.retry_count++;
+
+      std::cout << "[RELIABILITY] Packet with seq: "
+                << static_cast<int>(it->first)
+                << " needs retransmission (retry " << info.retry_count << ")"
+                << std::endl;
+    }
+    ++it;
+  }
+
+  return packets_to_retransmit;
 }
