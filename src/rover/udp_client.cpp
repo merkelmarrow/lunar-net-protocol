@@ -9,6 +9,7 @@
 #include <boost/asio/io_context.hpp>
 #include <stdexcept>
 
+#include "configs.hpp"
 #include "udp_client.hpp"
 
 #include <array>
@@ -127,7 +128,7 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
 
     // avoid immediate retry loop by using a timer
     auto timer = std::make_shared<boost::asio::steady_timer>(
-        io_context_, boost::asio::chrono::milliseconds(500));
+        io_context_, boost::asio::chrono::milliseconds(CLIENT_RETRY_DELAY));
 
     timer->async_wait([this, timer](const boost::system::error_code &ec) {
       if (!ec && running_) {

@@ -1,6 +1,7 @@
 // src/common/lumen_protocol.cpp
 
 #include "lumen_protocol.hpp"
+#include "configs.hpp"
 #include "lumen_header.hpp"
 #include "lumen_packet.hpp"
 #include "reliability_manager.hpp"
@@ -190,7 +191,7 @@ void LumenProtocol::process_frame_buffer() {
   }
 
   // if buffer gets too big, clear it
-  if (frame_buffer_.size() > 4096) {
+  if (frame_buffer_.size() > MAX_FRAME_BUFFER_SIZE) {
     std::cerr << "[LUMEN] Frame buffer overflow, clearing buffer" << std::endl;
     frame_buffer_.clear();
   }

@@ -78,9 +78,4 @@ private:
   std::mutex callback_mutex_;
 
   bool running_;
-
-  // configuration constants
-  static constexpr int MAX_RETRIES = 5;
-  static constexpr std::chrono::milliseconds BASE_TIMEOUT{5000};
-  static constexpr std::chrono::milliseconds CHECK_INTERVAL{1000};
 };

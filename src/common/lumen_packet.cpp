@@ -6,6 +6,8 @@
 #include <optional>
 #include <vector>
 
+#include "configs.hpp"
+
 LumenPacket::LumenPacket(const LumenHeader &header,
                          const std::vector<uint8_t> &payload)
     : header_(header), payload_(payload) {
@@ -26,8 +28,7 @@ LumenPacket::from_bytes(const std::vector<uint8_t> &bytes) {
   LumenHeader header = *header_opt;
 
   // calculate the expected packet size
-  size_t expected_size = LumenHeader::HEADER_SIZE +
-                         header.get_payload_length() +
+  size_t expected_size = LUMEN_HEADER_SIZE + header.get_payload_length() +
                          2; // +1 for ETX, +1 for CRC
 
   // validate packet size
@@ -36,13 +37,13 @@ LumenPacket::from_bytes(const std::vector<uint8_t> &bytes) {
   }
 
   // check etx
-  if (bytes[expected_size - 1] != LumenHeader::ETX) {
+  if (bytes[expected_size - 1] != LUMEN_ETX) {
     return std::nullopt;
   }
 
   // extract payload
-  std::vector<uint8_t> payload(bytes.begin() + LumenHeader::PAYLOAD_POS,
-                               bytes.begin() + LumenHeader::PAYLOAD_POS +
+  std::vector<uint8_t> payload(bytes.begin() + LUMEN_PAYLOAD_POS,
+                               bytes.begin() + LUMEN_PAYLOAD_POS +
                                    header.get_payload_length());
 
   // create packet
@@ -86,23 +87,23 @@ std::vector<uint8_t> LumenPacket::to_bytes() const {
   packet.push_back(crc);
 
   // add ETX
-  packet.push_back(LumenHeader::ETX);
+  packet.push_back(LUMEN_ETX);
 
   return packet;
 }
 
 size_t LumenPacket::total_size() const {
   // header size + payload size + 1 for CRC + 1 fro ETX
-  return LumenHeader::HEADER_SIZE + payload_.size() + 2;
+  return LUMEN_HEADER_SIZE + payload_.size() + 2;
 }
 
 bool LumenPacket::is_valid() const {
   std::vector<uint8_t> packet_data = to_bytes();
-  if (packet_data.size() < LumenHeader::HEADER_SIZE + 2) {
+  if (packet_data.size() < LUMEN_HEADER_SIZE + 2) {
     return false;
   }
 
-  if (packet_data.back() != LumenHeader::ETX) {
+  if (packet_data.back() != LUMEN_ETX) {
     return false;
   }
 

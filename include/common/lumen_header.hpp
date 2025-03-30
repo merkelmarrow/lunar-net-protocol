@@ -7,12 +7,10 @@
 #include <optional>
 #include <vector>
 
+#include "configs.hpp"
+
 class LumenHeader {
 public:
-  // constants for state delims
-  static constexpr uint8_t STX = 0x02;
-  static constexpr uint8_t ETX = 0x03;
-
   enum class MessageType : uint8_t {
     ACK = 0,
     CMD = 1,
@@ -47,15 +45,6 @@ public:
   void set_sequence(uint8_t seq);
   void set_timestamp(uint32_t timestamp);
   void set_payload_length(uint8_t length);
-
-  static constexpr size_t STX_POS = 0;
-  static constexpr size_t TYPE_POS = 1;
-  static constexpr size_t PRIO_POS = 2;
-  static constexpr size_t SEQ_POS = 3;
-  static constexpr size_t TIMESTAMP_POS = 4;
-  static constexpr size_t LEN_POS = 8;
-  static constexpr size_t PAYLOAD_POS = 9;
-  static constexpr size_t HEADER_SIZE = 9;
 
   static uint8_t calculate_crc8(const std::vector<uint8_t> &data);
 

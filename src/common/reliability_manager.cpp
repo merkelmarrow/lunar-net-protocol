@@ -12,8 +12,11 @@
 #include <mutex>
 #include <vector>
 
+#include "configs.hpp"
+
 ReliabilityManager::ReliabilityManager(boost::asio::io_context &io_context)
-    : next_expected_sequence_(0), retransmit_timer_(io_context, CHECK_INTERVAL),
+    : next_expected_sequence_(0),
+      retransmit_timer_(io_context, RELIABILITY_CHECK_INTERVAL),
       running_(false) {}
 
 ReliabilityManager::~ReliabilityManager() { stop(); }
@@ -155,9 +158,10 @@ ReliabilityManager::generate_sack_packet(uint8_t next_expected_seq) {
   // find missing sequences in the window
   std::vector<uint8_t> missing_seqs;
 
-  // look for gaps in a window of 32 sequences
-  for (uint8_t i = 0; i < 32; i++) {
-    uint8_t seq = static_cast<uint8_t>(next_expected_seq - 32 + i);
+  // look for gaps in a window of sack window sequences
+  for (uint8_t i = 0; i < SACK_WINDOW_SIZE; i++) {
+    uint8_t seq =
+        static_cast<uint8_t>(next_expected_seq - SACK_WINDOW_SIZE + i);
 
     if (received_sequences_.find(seq) == received_sequences_.end()) {
       missing_seqs.push_back(seq);
@@ -190,10 +194,10 @@ ReliabilityManager::get_packets_to_retransmit() {
         now - info.sent_time);
 
     // calculate timeout based on retry count (exponential backoff)
-    auto timeout = BASE_TIMEOUT * (1 << info.retry_count);
+    auto timeout = RELIABILITY_BASE_TIMEOUT * (1 << info.retry_count);
 
     if (elapsed > timeout) {
-      if (info.retry_count >= MAX_RETRIES) {
+      if (info.retry_count >= RELIABILITY_MAX_RETRIES) {
         std::cout << "[RELIABILITY] Max retries reached for seq: "
                   << static_cast<int>(it->first) << ", giving up." << std::endl;
 
@@ -254,7 +258,8 @@ void ReliabilityManager::handle_retransmission_timer() {
 
   // reschedule timer
   if (running_) {
-    retransmit_timer_.expires_at(retransmit_timer_.expiry() + CHECK_INTERVAL);
+    retransmit_timer_.expires_at(retransmit_timer_.expiry() +
+                                 RELIABILITY_CHECK_INTERVAL);
     retransmit_timer_.async_wait(
         [this](const boost::system::error_code &error) {
           if (!error && running_) {
