@@ -1,8 +1,11 @@
 // src/common/reliability_manager.cpp
 
 #include "reliability_manager.hpp"
+#include "lumen_packet.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/system/detail/error_category.hpp>
+#include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <mutex>
 
@@ -48,4 +51,20 @@ void ReliabilityManager::stop() {
   retransmit_timer_.cancel(ec);
 
   std::cout << "[RELIABILITY] Manager stopped." << std::endl;
+}
+
+void ReliabilityManager::add_send_packet(uint8_t seq, const LumenPacket &packet,
+                                         const udp::endpoint &recipient) {
+  if (!running_) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(sent_packets_mutex_);
+
+  sent_packets_.emplace(
+      seq,
+      SentPacketInfo{packet, std::chrono::steady_clock::now(), 0, recipient});
+
+  std::cout << "[RELIABILITY] Tracking packet with seq: "
+            << static_cast<int>(seq) << std::endl;
 }

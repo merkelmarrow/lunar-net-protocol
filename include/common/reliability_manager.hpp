@@ -51,6 +51,11 @@ private:
     std::chrono::steady_clock::time_point sent_time;
     int retry_count;
     udp::endpoint recipient;
+
+    SentPacketInfo(const LumenPacket &p,
+                   std::chrono::steady_clock::time_point t, int r,
+                   const udp::endpoint &e)
+        : packet(p), sent_time(t), retry_count(r), recipient(e) {}
   };
 
   void handle_retransmission_timer();
