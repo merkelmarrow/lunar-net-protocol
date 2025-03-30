@@ -82,6 +82,9 @@ std::vector<uint8_t> LumenPacket::to_bytes() const {
   // add payload
   packet.insert(packet.end(), payload_.begin(), payload_.end());
 
+  uint8_t crc = calculate_packet_crc();
+  packet.push_back(crc);
+
   // add ETX
   packet.push_back(LumenHeader::ETX);
 
