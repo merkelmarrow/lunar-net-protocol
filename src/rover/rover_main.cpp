@@ -57,15 +57,18 @@ int main(int argc, char *argv[]) {
     }
 
     // set the callback to process incoming messages
-    rover.set_receive_callback([](const std::string &received_data) {
+    rover.set_receive_callback([](const std::vector<uint8_t> &received_data) {
       try {
+        // Convert binary data to string
+        std::string received_str(received_data.begin(), received_data.end());
+
         // try to deserialize the message
-        if (Message::is_valid_json(received_data)) {
+        if (Message::is_valid_json(received_str)) {
           std::cout << "[ROVER] Received JSON message:" << std::endl;
-          std::cout << Message::pretty_print(received_data) << std::endl;
+          std::cout << Message::pretty_print(received_str) << std::endl;
 
           // deserialize to proper message type
-          auto message = Message::deserialise(received_data);
+          auto message = Message::deserialise(received_str);
 
           // print message details
           if (auto basic_msg = dynamic_cast<BasicMessage *>(message.get())) {
@@ -75,7 +78,7 @@ int main(int argc, char *argv[]) {
                       << std::endl;
           }
         } else {
-          std::cout << "[ROVER] Received non-JSON message: " << received_data
+          std::cout << "[ROVER] Received non-JSON message: " << received_str
                     << std::endl;
         }
       } catch (const std::exception &e) {
@@ -134,8 +137,11 @@ void process_commands(UdpClient &rover) {
               std::make_unique<BasicMessage>(message_content, "rover");
           std::string serialized = message->serialise();
 
+          // convert to binary data
+          std::vector<uint8_t> data(serialized.begin(), serialized.end());
+
           // send to the base station
-          rover.send_data(serialized);
+          rover.send_data(data);
 
           std::cout << "[ROVER] Message sent to base station" << std::endl;
         } catch (const std::exception &error) {
