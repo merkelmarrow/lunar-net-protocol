@@ -217,3 +217,11 @@ ReliabilityManager::get_packets_to_retransmit() {
 
   return packets_to_retransmit;
 }
+
+// set callback for packet retransmission
+void ReliabilityManager::set_retransmit_callback(
+    std::function<void(const LumenPacket &, const udp::endpoint &)> callback) {
+  std::lock_guard<std::mutex> lock(callback_mutex_);
+
+  retransmit_callback_ = std::move(callback);
+}
