@@ -3,6 +3,7 @@
 #include "message_manager.hpp"
 #include "lumen_header.hpp"
 #include "message.hpp"
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <mutex>
@@ -104,4 +105,12 @@ void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
     std::cerr << "[ERROR] Failed to process message: " << error.what()
               << std::endl;
   }
+}
+
+std::vector<uint8_t> MessageManager::string_to_binary(const std::string &str) {
+  return std::vector<uint8_t>(str.begin(), str.end());
+}
+
+std::string MessageManager::binary_to_string(const std::vector<uint8_t> &data) {
+  return std::string(data.begin(), data.end());
 }
