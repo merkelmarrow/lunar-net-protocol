@@ -14,7 +14,7 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
       current_sequence_(0),
       reliability_manager_(std::make_unique<ReliabilityManager>(io_context)),
       send_acks_(send_acks), use_sack_(use_sack), running_(false),
-      io_context_(io_context) {
+      io_context_(io_context), buffer_sender_endpoint_(udp::endpoint()) {
 
   // set up retransmission callback
   reliability_manager_->set_retransmit_callback(
@@ -36,7 +36,7 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
       current_sequence_(0),
       reliability_manager_(std::make_unique<ReliabilityManager>(io_context)),
       send_acks_(send_acks), use_sack_(use_sack), running_(false),
-      io_context_(io_context) {
+      io_context_(io_context), buffer_sender_endpoint_(udp::endpoint()) {
 
   // set up retransmission callback
   reliability_manager_->set_retransmit_callback(
