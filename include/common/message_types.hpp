@@ -6,8 +6,15 @@
 // not used directly here but required wherever the macro is called
 ////
 #include "basic_message.hpp"
+#include "command_message.hpp"
+#include "status_message.hpp"
+#include "telemetry_message.hpp"
 ////
 
 // this is a central registry of all message types
 // to add a new message, just add it to the list
-#define MESSAGE_TYPES_LIST X(BasicMessage)
+#define MESSAGE_TYPES_LIST                                                     \
+  X(BasicMessage)                                                              \
+  X(CommandMessage)                                                            \
+  X(TelemetryMessage)                                                          \
+  X(StatusMessage)
