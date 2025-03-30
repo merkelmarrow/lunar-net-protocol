@@ -112,3 +112,23 @@ bool LumenPacket::is_valid() const {
   uint8_t stored_crc = packet_data[crc_pos];
   return calculated_crc == stored_crc;
 }
+
+size_t LumenPacket::get_crc_position(const std::vector<uint8_t> &packet_data) {
+  // crc is located right before the etx byte
+  return packet_data.size() - 2;
+}
+
+uint8_t LumenPacket::calculate_packet_crc() const {
+  std::vector<uint8_t> data_for_crc;
+
+  // add header bytes
+  std::vector<uint8_t> header_bytes = header_.to_bytes();
+  data_for_crc.insert(data_for_crc.end(), header_bytes.begin(),
+                      header_bytes.end());
+
+  // add payload bytes
+  data_for_crc.insert(data_for_crc.end(), payload_.begin(), payload_.end());
+
+  // calculate crc over combined data
+  return LumenHeader::calculate_crc8(data_for_crc);
+}
