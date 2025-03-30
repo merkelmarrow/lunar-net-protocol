@@ -123,3 +123,23 @@ void ReliabilityManager::process_sack(
     }
   }
 }
+
+void ReliabilityManager::record_received_sequence(uint8_t seq) {
+  if (!running_) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(received_sequences_mutex_);
+
+  // add to received sequences
+  received_sequences_.insert(seq);
+
+  // update the next expected sequence if this is the one we're waiting for
+  if (seq == next_expected_sequence_) {
+    // find the next gap
+    while (received_sequences_.find(next_expected_sequence_) !=
+           received_sequences_.end()) {
+      next_expected_sequence_++;
+    }
+  }
+}
