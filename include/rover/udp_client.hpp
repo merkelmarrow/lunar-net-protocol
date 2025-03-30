@@ -9,6 +9,10 @@
 
 #include "configs.hpp"
 
+#include <array>
+#include <mutex>
+#include <vector>
+
 using boost::asio::ip::udp;
 
 class UdpClient {
@@ -52,14 +56,17 @@ private:
   void handle_receive(const boost::system::error_code &error,
                       std::size_t bytes_transferred);
 
+  void do_receive();
+
   boost::asio::io_context &io_context_;
   udp::socket socket_;
+
   udp::endpoint base_endpoint_;
+  udp::endpoint receive_endpoint_; // for storing the sender of incoming packets
+
   std::array<char, CLIENT_SOCK_BUF_SIZE> receive_buffer_;
   std::function<void(const std::vector<uint8_t> &)> receive_callback_;
   bool running_;
-
-  void do_receive();
 
   std::mutex callback_mutex_;
 };

@@ -11,6 +11,9 @@
 
 #include "udp_client.hpp"
 
+#include <array>
+#include <mutex>
+
 UdpClient::UdpClient(boost::asio::io_context &io_context)
     : io_context_(io_context), socket_(io_context, udp::endpoint(udp::v4(), 0)),
       running_(false) {}
@@ -139,7 +142,7 @@ void UdpClient::do_receive() {
     return;
 
   socket_.async_receive_from(boost::asio::buffer(receive_buffer_),
-                             base_endpoint_,
+                             receive_endpoint_,
                              [this](const boost::system::error_code &error,
                                     std::size_t bytes_transferred) {
                                handle_receive(error, bytes_transferred);
