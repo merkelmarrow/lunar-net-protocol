@@ -18,7 +18,15 @@ public:
 
   std::vector<uint8_t> to_bytes() const;
 
+  bool is_valid() const;
+
+  size_t total_size() const;
+
+  static size_t get_crc_position(const std::vector<uint8_t> &packet_data);
+
 private:
   LumenHeader header_;
   std::vector<uint8_t> payload_;
+
+  uint8_t calculate_packet_crc() const;
 };
