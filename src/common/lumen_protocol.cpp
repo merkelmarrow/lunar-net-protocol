@@ -206,11 +206,11 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
   uint8_t pkt_seq = header.get_sequence();
   LumenHeader::MessageType type = header.get_type();
 
-  // create a sender key (IP:port) to index ordering state.
+  // Create a sender key (IP:port) to index ordering state.
   std::string sender_key =
       endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
 
-  // process control packets immediately
+  // --- 1. Process control packets immediately ---
   if (type == LumenHeader::MessageType::ACK) {
     if (!packet.get_payload().empty()) {
       uint8_t acked_seq = packet.get_payload()[0];
@@ -225,14 +225,17 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     return;
   }
 
-  // ordering for non–control packets ---
+  // --- 2. Simple ordering for non–control packets ---
   {
     std::lock_guard<std::mutex> lock(last_delivered_mutex_);
     auto it = last_delivered_.find(sender_key);
     if (it == last_delivered_.end()) {
-      // first packet from this sender: deliver and record its sequence
+      // First packet from this sender: deliver and record its sequence.
       last_delivered_[sender_key] = pkt_seq;
       deliver_packet(packet, endpoint);
+      if (send_acks_) {
+        send_ack(pkt_seq, endpoint);
+      }
     } else {
       uint8_t last = it->second;
       uint8_t expected = (last + 1) & 0xFF;
@@ -242,15 +245,24 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
       if (pkt_seq == expected) {
         deliver_packet(packet, endpoint);
         it->second = pkt_seq;
+        if (send_acks_) {
+          send_ack(pkt_seq, endpoint);
+        }
       } else if (diff > 0 && diff < 128) {
         std::cout << "[LUMEN] Out-of-order packet: expected seq "
                   << static_cast<int>(expected) << " but got "
                   << static_cast<int>(pkt_seq) << std::endl;
         send_nak(expected, endpoint);
-        // drop this packet.
+        // Drop this packet.
       } else {
-        std::cout << "[LUMEN] Dropping duplicate/old packet with seq: "
-                  << static_cast<int>(pkt_seq) << std::endl;
+        // Duplicate or old packet: send an ACK so the sender stops
+        // retransmitting.
+        std::cout << "[LUMEN] Duplicate/old packet with seq: "
+                  << static_cast<int>(pkt_seq) << " received; sending ACK."
+                  << std::endl;
+        if (send_acks_) {
+          send_ack(pkt_seq, endpoint);
+        }
       }
     }
   }

@@ -111,7 +111,7 @@ private:
   // Endpoint tracking for frame buffer
   udp::endpoint buffer_sender_endpoint_;
 
-  // for each sender, we record the last delivered (non-control) sequence.
+  // for each sender, we record the last delivered (non–control) sequence.
   std::unordered_map<std::string, uint8_t> last_delivered_;
   std::mutex last_delivered_mutex_;
 };
