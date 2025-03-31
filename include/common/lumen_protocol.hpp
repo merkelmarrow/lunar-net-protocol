@@ -15,6 +15,7 @@
 #include "lumen_header.hpp"
 #include "lumen_packet.hpp"
 #include "reliability_manager.hpp"
+#include <unordered_map>
 
 using boost::asio::ip::udp;
 
@@ -52,7 +53,7 @@ private:
 
   void handle_udp_data(const std::vector<uint8_t> &data,
                        const udp::endpoint &endpoint);
-  void process_frame_buffer();
+
   void process_complete_packet(const LumenPacket &packet,
                                const udp::endpoint &endpoint);
 
@@ -76,7 +77,7 @@ private:
   UdpClient *client_;
 
   // frame buffer for reassembly
-  std::vector<uint8_t> frame_buffer_;
+  std::unordered_map<std::string, std::vector<uint8_t>> frame_buffers_;
 
   // sequence number management
   std::atomic<uint8_t> current_sequence_;
@@ -89,7 +90,7 @@ private:
                      const udp::endpoint &)>
       message_callback_;
 
-  std::mutex buffer_mutex_;
+  std::mutex frame_buffers_mutex_;
   std::mutex callback_mutex_;
 
   bool send_acks_;
@@ -99,6 +100,9 @@ private:
 
   // IO context reference
   boost::asio::io_context &io_context_;
+
+  void process_frame_buffer_for_sender(const std::string &sender_key,
+                                       const udp::endpoint &endpoint);
 
   // Endpoint tracking for frame buffer
   udp::endpoint buffer_sender_endpoint_;

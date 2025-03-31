@@ -61,8 +61,8 @@ void LumenProtocol::start() {
 
   // clear frame buffer
   {
-    std::lock_guard<std::mutex> lock(buffer_mutex_);
-    frame_buffer_.clear();
+    std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
+    frame_buffers_.clear();
   }
 
   // start reliability manager
@@ -152,48 +152,50 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
   if (!running_)
     return;
 
+  std::string sender_key =
+      endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
   // add data to frame buffer
   {
-    std::lock_guard<std::mutex> lock(buffer_mutex_);
-    frame_buffer_.insert(frame_buffer_.end(), data.begin(), data.end());
-    buffer_sender_endpoint_ = endpoint; // store the endpoint for this data
+    std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
+    // append the received data to the sender-specific buffer.
+    frame_buffers_[sender_key].insert(frame_buffers_[sender_key].end(),
+                                      data.begin(), data.end());
   }
 
   // process frame buffer to extract complete packets
-  process_frame_buffer();
+  process_frame_buffer_for_sender(sender_key, endpoint);
 }
 
-void LumenProtocol::process_frame_buffer() {
-  std::lock_guard<std::mutex> lock(buffer_mutex_);
+void LumenProtocol::process_frame_buffer_for_sender(
+    const std::string &sender_key, const udp::endpoint &endpoint) {
+  std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
+  auto &buffer = frame_buffers_[sender_key];
 
-  // keep processing until we can't find any more complete packets
-  while (!frame_buffer_.empty()) {
-    // try to extract a packet
-    auto packet_opt = LumenPacket::from_bytes(frame_buffer_);
-
+  // process complete packets in the sender's specific buffer
+  while (!buffer.empty()) {
+    auto packet_opt = LumenPacket::from_bytes(buffer);
     if (!packet_opt) {
-      // if we can't extract a complete packet, we're done
-      // keep the partial data in the buffer for next time
+      // there's no complete packet yet, leave the partial data
       break;
     }
-
-    // we got a packet, remove it from the buffer
     LumenPacket packet = *packet_opt;
-    size_t packet_size = packet.total_size();
 
-    if (packet_size <= frame_buffer_.size()) {
-      frame_buffer_.erase(frame_buffer_.begin(),
-                          frame_buffer_.begin() + packet_size);
+    uint16_t packet_size = packet.total_size();
+
+    if (packet_size <= buffer.size()) {
+      buffer.erase(buffer.begin(), buffer.begin() + packet_size);
+    } else {
+      break;
     }
-
-    // process the packet
-    process_complete_packet(packet, buffer_sender_endpoint_);
+    // process the complete extracted packet
+    process_complete_packet(packet, endpoint);
   }
 
-  // if buffer gets too big, clear it
-  if (frame_buffer_.size() > MAX_FRAME_BUFFER_SIZE) {
-    std::cerr << "[LUMEN] Frame buffer overflow, clearing buffer" << std::endl;
-    frame_buffer_.clear();
+  // prevent buffer overflow
+  if (buffer.size() > MAX_FRAME_BUFFER_SIZE) {
+    std::cerr << "[LUMEN] Frame buffer overflow for sender " << sender_key
+              << ", clearing buffer" << std::endl;
+    buffer.clear();
   }
 }
 
