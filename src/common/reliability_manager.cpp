@@ -19,7 +19,20 @@ ReliabilityManager::ReliabilityManager(boost::asio::io_context &io_context,
                                        bool send_acks, bool expect_acks)
     : retransmit_timer_(io_context, RELIABILITY_CHECK_INTERVAL),
       cleanup_timer_(io_context, CLEANUP_INTERVAL), running_(false),
-      send_acks_(send_acks), expect_acks_(expect_acks) {}
+      send_acks_(send_acks), expect_acks_(expect_acks) {
+
+  // Initialize received sequence data
+  {
+    std::lock_guard<std::mutex> lock(received_sequences_mutex_);
+    received_sequences_.clear();
+  }
+
+  // Initialize NAK tracking
+  {
+    std::lock_guard<std::mutex> lock(recent_naks_mutex_);
+    recent_naks_.clear();
+  }
+}
 
 ReliabilityManager::~ReliabilityManager() { stop(); }
 
@@ -97,12 +110,40 @@ void ReliabilityManager::process_ack(uint8_t seq) {
 
   std::lock_guard<std::mutex> lock(sent_packets_mutex_);
 
-  // remove the acknowledged packet from tracking
+  // Remove the acknowledged packet from tracking
   auto it = sent_packets_.find(seq);
   if (it != sent_packets_.end()) {
     sent_packets_.erase(it);
     std::cout << "[RELIABILITY] Received ACK for seq: " << static_cast<int>(seq)
               << ", removed from retransmission tracking" << std::endl;
+
+    // Check if there are any packets with older sequence numbers that should be
+    // considered delivered This handles the case where ACKs might be lost but
+    // later packets arrive
+    std::vector<uint8_t> to_remove;
+
+    for (const auto &[old_seq, info] : sent_packets_) {
+      // If this sequence is older than the ACKed one (considering wraparound)
+      // and it's been at least 5 seconds since transmission, assume it was
+      // delivered
+      if (((seq - old_seq) & 0xFF) < 128) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            now - info.sent_time);
+
+        if (elapsed.count() >= 5) {
+          to_remove.push_back(old_seq);
+        }
+      }
+    }
+
+    // Remove any packets we've determined are likely delivered
+    for (uint8_t old_seq : to_remove) {
+      sent_packets_.erase(old_seq);
+      std::cout << "[RELIABILITY] Implicitly ACKing old seq: "
+                << static_cast<int>(old_seq) << " due to newer ACK"
+                << std::endl;
+    }
   } else {
     std::cout << "[RELIABILITY] Received ACK for seq: " << static_cast<int>(seq)
               << ", but packet not in tracking (already ACKed or never sent)"
@@ -161,33 +202,36 @@ ReliabilityManager::get_missing_sequences(uint8_t current_seq,
 
   std::vector<uint8_t> missing_seqs;
 
-  // Calculate window start accounting for wraparound
-  uint8_t window_start = current_seq - window_size;
+  // Only look backward from current sequence, not forward
+  // This is critical - we're looking for packets we should have already
+  // received Window size should be small to avoid requesting old packets
+  const uint8_t MAX_LOOKBACK = 16; // Only look back 16 packets max
+  uint8_t actual_window = std::min(window_size, MAX_LOOKBACK);
 
-  // Look for gaps in the sequence numbers within our window
-  for (uint8_t i = 0; i < window_size; i++) {
-    uint8_t seq = static_cast<uint8_t>(window_start + i);
+  // Start looking from (current_seq - 1) down to (current_seq - actual_window)
+  for (uint8_t i = 1; i <= actual_window; i++) {
+    // Handle 8-bit wraparound correctly
+    uint8_t seq_to_check = (current_seq - i) & 0xFF;
 
-    // Skip the current sequence or if it's equal to or beyond current_seq
-    if (seq == current_seq || static_cast<int8_t>(seq - current_seq) >= 0) {
+    // Don't request NAKs for sequence 0, which might not have been sent
+    if (seq_to_check == 0)
       continue;
-    }
 
-    // Check if this sequence is missing
-    if (received_sequences_.find(seq) == received_sequences_.end()) {
-      // Only consider it missing if we've seen a higher sequence number for at
-      // least 50ms This helps with jitter by avoiding requesting packets that
-      // might simply be delayed
+    // Check if we missed this sequence
+    if (received_sequences_.find(seq_to_check) == received_sequences_.end()) {
+      // Check if we've seen a later sequence for at least 100ms to allow for
+      // jitter
       auto now = std::chrono::steady_clock::now();
       bool have_later_seq = false;
 
-      for (uint8_t j = 1; j <= 10; j++) { // Check next 10 sequence numbers
-        uint8_t later_seq = static_cast<uint8_t>(seq + j);
+      // Look for any sequence between the missing one and current
+      for (uint8_t j = 1; j < i; j++) {
+        uint8_t later_seq = (seq_to_check + j) & 0xFF;
         auto it = received_sequences_.find(later_seq);
         if (it != received_sequences_.end()) {
           auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
               now - it->second);
-          if (elapsed.count() >= 50) { // 50ms jitter allowance
+          if (elapsed.count() >= 100) { // 100ms jitter allowance
             have_later_seq = true;
             break;
           }
@@ -195,7 +239,7 @@ ReliabilityManager::get_missing_sequences(uint8_t current_seq,
       }
 
       if (have_later_seq) {
-        missing_seqs.push_back(seq);
+        missing_seqs.push_back(seq_to_check);
       }
     }
   }

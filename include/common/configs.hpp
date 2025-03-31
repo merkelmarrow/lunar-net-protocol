@@ -30,3 +30,13 @@ constexpr size_t SACK_WINDOW_SIZE = 32;
 constexpr size_t MAX_FRAME_BUFFER_SIZE = 4096;
 
 constexpr std::chrono::milliseconds CLIENT_RETRY_DELAY{4000};
+
+// Constants
+static constexpr std::chrono::milliseconds NAK_DEBOUNCE_TIME{
+    1000}; // Don't send NAKs too frequently
+static constexpr std::chrono::milliseconds CLEANUP_INTERVAL{
+    5000}; // Clean up old tracking entries every 5 seconds
+static constexpr std::chrono::milliseconds SEQUENCE_RETAIN_TIME{
+    30000}; // Keep received sequences for 30 seconds
+static constexpr uint8_t MAX_LOOKAHEAD = 32;  // Maximum sequence lookahead
+static constexpr uint8_t MAX_LOOKBEHIND = 16; // Maximum sequence lookbehind

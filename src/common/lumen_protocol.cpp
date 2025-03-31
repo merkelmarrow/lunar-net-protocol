@@ -237,11 +237,11 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
 
 void LumenProtocol::process_complete_packet(const LumenPacket &packet,
                                             const udp::endpoint &endpoint) {
-  // extract header and payload
+  // Extract header and payload
   const LumenHeader &header = packet.get_header();
   const std::vector<uint8_t> &payload = packet.get_payload();
 
-  // get message type and sequence
+  // Get message type and sequence
   LumenHeader::MessageType type = header.get_type();
   uint8_t seq = header.get_sequence();
 
@@ -279,17 +279,25 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     return;
   }
 
-  // Send ACK if in BASE_STATION mode
+  // Send ACK if in BASE_STATION mode for non-ACK/NAK packets
   if (mode_ == ProtocolMode::BASE_STATION) {
     send_ack(seq, endpoint);
   }
 
   // Check for gaps in sequence numbers if in ROVER mode
-  if (mode_ == ProtocolMode::ROVER) {
-    check_sequence_gaps(seq, endpoint);
+  // Only do this for normal messages, not control messages
+  if (mode_ == ProtocolMode::ROVER && type != LumenHeader::MessageType::ACK &&
+      type != LumenHeader::MessageType::NAK) {
+
+    // Limit NAK checking to prevent excessive NAKs
+    static uint8_t last_nak_check_seq = 0;
+    if ((seq - last_nak_check_seq) & 0xFF >= 5) { // Check every 5 sequences
+      check_sequence_gaps(seq, endpoint);
+      last_nak_check_seq = seq;
+    }
   }
 
-  // Deliver the payload to the callback (for non-control messages)
+  // Deliver the payload to the callback
   std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
                      const udp::endpoint &)>
       callback_copy;
@@ -305,15 +313,27 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
 
 void LumenProtocol::check_sequence_gaps(uint8_t received_seq,
                                         const udp::endpoint &endpoint) {
-  // Check if there are any gaps in the sequence numbers
+  // Get missing sequences with a small window
   std::vector<uint8_t> missing_seqs =
-      reliability_manager_->get_missing_sequences(received_seq, WINDOW_SIZE);
+      reliability_manager_->get_missing_sequences(received_seq, 8);
+
+  // Limit the number of NAKs sent at once to avoid network congestion
+  const int MAX_NAKS_PER_CHECK = 3;
+  int nak_count = 0;
 
   for (uint8_t missing_seq : missing_seqs) {
+    // Don't request sequence 0 (it might be the first message)
+    if (missing_seq == 0)
+      continue;
+
     // Don't NAK for sequence numbers we've already NAK'd for recently
     if (!reliability_manager_->is_recently_naked(missing_seq)) {
       send_nak(missing_seq, endpoint);
       reliability_manager_->record_nak_sent(missing_seq);
+
+      // Limit NAKs per check
+      if (++nak_count >= MAX_NAKS_PER_CHECK)
+        break;
     }
   }
 }
