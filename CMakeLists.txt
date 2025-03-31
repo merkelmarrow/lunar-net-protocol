@@ -41,7 +41,7 @@ add_library(common
 )
 
 target_include_directories(common PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/common
 )
 
 target_link_libraries(common PUBLIC nlohmann_json::nlohmann_json Boost::system)
@@ -56,7 +56,7 @@ add_library(base_lib
 )
 
 target_include_directories(base_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/base
 )
 
 target_link_libraries(base_lib PUBLIC common)
@@ -78,7 +78,7 @@ add_library(rover_lib
 )
 
 target_include_directories(rover_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/rover
 )
 
 target_link_libraries(rover_lib PUBLIC common)
