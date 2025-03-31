@@ -115,9 +115,6 @@ void ReliabilityManager::process_sack(
       }
 
       if (callback_copy) {
-        // reset retry counter (SACK is a special case)
-        it->second.retry_count = 0;
-
         // update sent time
         it->second.sent_time = std::chrono::steady_clock::now();
 
