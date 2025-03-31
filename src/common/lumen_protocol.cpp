@@ -14,7 +14,7 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
     : mode_(Mode::SERVER), server_(&server), client_(nullptr),
       current_sequence_(0),
       reliability_manager_(std::make_unique<ReliabilityManager>(io_context)),
-      send_acks_(send_acks), use_sack_(use_sack), running_(false),
+      send_acks_(send_acks), use_sack_(true), running_(false),
       io_context_(io_context), buffer_sender_endpoint_(udp::endpoint()) {
 
   // set up retransmission callback

@@ -77,5 +77,17 @@ private:
   std::mutex received_sequences_mutex_;
   std::mutex callback_mutex_;
 
+  // helper to check if a sequence number is within a window, accounting for
+  // wraparound
+  bool is_sequence_in_window(uint8_t seq, uint8_t window_start,
+                             uint8_t window_size) const {
+    for (uint8_t i = 0; i < window_size; i++) {
+      if (seq == ((window_start + i) & 0xFF)) { // handle wrap-around with &0xFF
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool running_;
 };

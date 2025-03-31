@@ -193,18 +193,21 @@ LumenPacket ReliabilityManager::generate_sack_packet() {
   uint8_t next_seq = next_expected_sequence_;
   std::vector<uint8_t> missing_seqs;
 
-  // look forward from next_expected_sequence_ over the window size.
-  for (uint8_t i = 0; i < SACK_WINDOW_SIZE; i++) {
+  // add the next expected sequence as the first entry
+  missing_seqs.push_back(next_seq);
+
+  // look forward from next_expected_sequence_ over the window size
+  for (uint8_t i = 1; i < SACK_WINDOW_SIZE; i++) {
     uint8_t seq = static_cast<uint8_t>(next_seq + i);
     if (received_sequences_.find(seq) == received_sequences_.end()) {
       missing_seqs.push_back(seq);
     }
   }
 
-  // create a SACK header using next_seq.
+  // create a SACK header using next_seq
   LumenHeader header(LumenHeader::MessageType::SACK,
                      LumenHeader::Priority::HIGH, next_seq,
-                     0, // Use timestamp 0 for SACK packets.
+                     0, // Use timestamp 0 for SACK packets
                      static_cast<uint16_t>(missing_seqs.size()));
 
   return LumenPacket(header, missing_seqs);

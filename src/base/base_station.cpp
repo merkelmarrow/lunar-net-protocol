@@ -214,12 +214,16 @@ void BaseStation::handle_session_confirm(const std::string &rover_id,
       return;
     }
 
-    // ppdate state
+    // update state
     session_state_ = SessionState::ACTIVE;
   }
 
   std::cout << "[BASE STATION] Session established with rover: " << rover_id
             << std::endl;
+
+  // send a session confirmation ACK to let the rover know we're ready
+  CommandMessage cmd_msg("SESSION_ESTABLISHED", rover_id, station_id_);
+  message_manager_->send_message(cmd_msg, sender);
 }
 
 void BaseStation::send_command(const std::string &command,

@@ -77,12 +77,12 @@ void Rover::stop() {
 }
 
 void Rover::send_telemetry(const std::map<std::string, double> &readings) {
-  // only send if session is active
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     if (session_state_ != SessionState::ACTIVE) {
-      std::cout << "[ROVER] Cannot send telemetry, session not active"
-                << std::endl;
+      std::cout << "[ROVER] Cannot send telemetry, session not active (current "
+                   "state: "
+                << static_cast<int>(session_state_) << ")" << std::endl;
       return;
     }
   }
@@ -126,8 +126,17 @@ void Rover::handle_message(std::unique_ptr<Message> message,
     // handle session management commands
     if (command == "SESSION_ACCEPT") {
       handle_session_accept();
+    } else if (command == "SESSION_ESTABLISHED") {
+      // handle the explicit session establishment
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      if (session_state_ != SessionState::ACTIVE) {
+        session_state_ = SessionState::ACTIVE;
+        std::cout
+            << "[ROVER] Received explicit SESSION_ESTABLISHED confirmation"
+            << std::endl;
+      }
     }
-    // handle other commands as needed
+    // handle other commands here
   }
 }
 
