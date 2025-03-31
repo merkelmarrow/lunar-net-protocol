@@ -103,10 +103,49 @@ void ReliabilityManager::process_sack(
   std::cout << "[RELIABILITY] Received SACK with " << missing_seqs.size()
             << " missing sequences." << std::endl;
 
+  if (missing_seqs.empty()) {
+    return; // nothing to do if no missing sequences
+  }
+
+  // create a set of missing sequences for faster lookup
+  std::set<uint8_t> missing_set(missing_seqs.begin(), missing_seqs.end());
+
+  // determine the valid sequence window - first sequence in SACK is the next
+  // expected
+  uint8_t window_start = missing_seqs[0];
+  uint8_t window_size = SACK_WINDOW_SIZE;
+
+  // acknowledge all packets in our tracking that are within window but not in
+  // missing list
+  auto it = sent_packets_.begin();
+  while (it != sent_packets_.end()) {
+    uint8_t seq = it->first;
+
+    // check if this sequence is within the window (handle wrap-around)
+    bool in_window = false;
+    for (uint8_t i = 0; i < window_size; i++) {
+      if (seq == ((window_start + i) & 0xFF)) { // handle wrap-around with &0xFF
+        in_window = true;
+        break;
+      }
+    }
+
+    if (in_window && missing_set.find(seq) == missing_set.end()) {
+      // this packet is within window but not in missing list, so it was
+      // received
+      std::cout << "[RELIABILITY] SACK implicitly acknowledged seq: "
+                << static_cast<int>(seq) << std::endl;
+      it = sent_packets_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  // now handle retransmission for the missing sequences
   for (uint8_t seq : missing_seqs) {
     auto it = sent_packets_.find(seq);
     if (it != sent_packets_.end()) {
-      // get a copy of retransmit callback for thread safety
+      // Get a copy of retransmit callback for thread safety
       std::function<void(const LumenPacket &, const udp::endpoint &)>
           callback_copy;
       {
@@ -115,10 +154,10 @@ void ReliabilityManager::process_sack(
       }
 
       if (callback_copy) {
-        // update sent time
+        // Update sent time
         it->second.sent_time = std::chrono::steady_clock::now();
 
-        // retransmit
+        // Retransmit
         callback_copy(it->second.packet, it->second.recipient);
         std::cout << "[RELIABILITY] Retransmitting packet with seq: "
                   << static_cast<int>(seq) << " (SACK)" << std::endl;
