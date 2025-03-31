@@ -151,18 +151,16 @@ void ReliabilityManager::record_received_sequence(uint8_t seq) {
   }
 }
 
-LumenPacket
-ReliabilityManager::generate_sack_packet(uint8_t next_expected_seq) {
+LumenPacket ReliabilityManager::generate_sack_packet() {
   std::lock_guard<std::mutex> lock(received_sequences_mutex_);
 
+  uint8_t next_seq = next_expected_sequence_;
   // find missing sequences in the window
   std::vector<uint8_t> missing_seqs;
 
   // look for gaps in a window of sack window sequences
   for (uint8_t i = 0; i < SACK_WINDOW_SIZE; i++) {
-    uint8_t seq =
-        static_cast<uint8_t>(next_expected_seq - SACK_WINDOW_SIZE + i);
-
+    uint8_t seq = static_cast<uint8_t>(next_seq - SACK_WINDOW_SIZE + i);
     if (received_sequences_.find(seq) == received_sequences_.end()) {
       missing_seqs.push_back(seq);
     }
@@ -170,8 +168,8 @@ ReliabilityManager::generate_sack_packet(uint8_t next_expected_seq) {
 
   // create a sack header
   LumenHeader header(LumenHeader::MessageType::SACK,
-                     LumenHeader::Priority::HIGH, next_expected_seq,
-                     0, // timestamp 0 for SACK
+                     LumenHeader::Priority::HIGH, next_seq,
+                     0, // Use timestamp 0 for SACK packets.
                      static_cast<uint16_t>(missing_seqs.size()));
 
   return LumenPacket(header, missing_seqs);

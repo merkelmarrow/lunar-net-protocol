@@ -36,7 +36,7 @@ public:
   void record_received_sequence(uint8_t seq);
 
   // generate a sack packet
-  LumenPacket generate_sack_packet(uint8_t next_expected_seq);
+  LumenPacket generate_sack_packet();
 
   // get messages that need retransmission
   std::vector<std::pair<LumenPacket, udp::endpoint>>

@@ -298,8 +298,7 @@ void LumenProtocol::send_ack(uint8_t seq, const udp::endpoint &recipient) {
 
 void LumenProtocol::send_sack(const udp::endpoint &recipient) {
   // generate SACK packet using reliability manager
-  LumenPacket sack_packet =
-      reliability_manager_->generate_sack_packet(current_sequence_);
+  LumenPacket sack_packet = reliability_manager_->generate_sack_packet();
 
   // send the SACK packet
   send_packet(sack_packet, recipient);
