@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD 20 REQUIRED)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Find dependencies
-find_package(Boost REQUIRED COMPONENTS system)
+find_package(Boost REQUIRED COMPONENTS system program_options)
 
 # Enable fetching content from internet to fetch json lib
 include(FetchContent)
