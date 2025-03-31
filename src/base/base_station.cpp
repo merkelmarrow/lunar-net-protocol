@@ -13,9 +13,8 @@ BaseStation::BaseStation(boost::asio::io_context &io_context, int port,
   // initialize UDP server
   server_ = std::make_unique<UdpServer>(io_context, port);
 
-  // initialize the protocol layer
-  protocol_ =
-      std::make_unique<LumenProtocol>(io_context, *server_, true, false);
+  // initialize the protocol layer - base station sends ACKs and expects NAKs
+  protocol_ = std::make_unique<LumenProtocol>(io_context, *server_);
 
   // initialize the message manager with server reference
   message_manager_ = std::make_unique<MessageManager>(

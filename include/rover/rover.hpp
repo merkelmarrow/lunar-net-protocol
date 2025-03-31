@@ -42,6 +42,7 @@ public:
   SessionState get_session_state() const;
 
   void send_raw_message(const Message &message, const udp::endpoint &endpoint);
+
   // send status message
   void send_status();
 
@@ -60,6 +61,9 @@ private:
   // status timer handler
   void handle_status_timer();
 
+  // Retry handshake if needed
+  void handle_handshake_timer();
+
   // core components
   boost::asio::io_context &io_context_;
   std::unique_ptr<UdpClient> client_;
@@ -68,6 +72,9 @@ private:
 
   // status timer
   boost::asio::steady_timer status_timer_;
+
+  // handshake retry timer
+  boost::asio::steady_timer handshake_timer_;
 
   // session state
   SessionState session_state_;
@@ -82,4 +89,8 @@ private:
   // thread safety
   mutable std::mutex state_mutex_;
   std::mutex status_mutex_;
+
+  // handshake retry count
+  int handshake_retry_count_;
+  static constexpr int MAX_HANDSHAKE_RETRIES = 5;
 };

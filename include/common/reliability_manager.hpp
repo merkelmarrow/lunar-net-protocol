@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -18,7 +20,8 @@ using boost::asio::ip::udp;
 
 class ReliabilityManager {
 public:
-  ReliabilityManager(boost::asio::io_context &io_context);
+  ReliabilityManager(boost::asio::io_context &io_context,
+                     bool send_acks = false, bool expect_acks = false);
   ~ReliabilityManager();
 
   void start();
@@ -32,14 +35,16 @@ public:
   void process_ack(uint8_t seq);
   void process_nak(uint8_t seq);
 
-  // Get the next expected sequence number
-  uint8_t get_next_expected_sequence() const;
-
   // record received sequences for NAK generation
   void record_received_sequence(uint8_t seq);
 
-  // generate a nak packet
-  LumenPacket generate_nak_packet(uint8_t seq);
+  // Get missing sequence numbers in the window
+  std::vector<uint8_t> get_missing_sequences(uint8_t current_seq,
+                                             uint8_t window_size);
+
+  // NAK tracking to avoid duplicate NAKs
+  bool is_recently_naked(uint8_t seq);
+  void record_nak_sent(uint8_t seq);
 
   // get messages that need retransmission
   std::vector<std::pair<LumenPacket, udp::endpoint>>
@@ -63,35 +68,45 @@ private:
 
   void handle_retransmission_timer();
 
-  // map of sequence numebers to packet info
+  // map of sequence numbers to packet info
   std::map<uint8_t, SentPacketInfo> sent_packets_;
 
-  // track received sequence numbers for gap detection
-  std::set<uint8_t> received_sequences_;
-  uint8_t next_expected_sequence_;
+  // track received sequence numbers with timestamps for jitter handling
+  std::map<uint8_t, std::chrono::steady_clock::time_point> received_sequences_;
+
+  // track recently sent NAKs with timestamps
+  std::map<uint8_t, std::chrono::steady_clock::time_point> recent_naks_;
 
   boost::asio::steady_timer retransmit_timer_;
+  boost::asio::steady_timer cleanup_timer_;
 
   // retransmission callback
   std::function<void(const LumenPacket &, const udp::endpoint &)>
       retransmit_callback_;
 
   std::mutex sent_packets_mutex_;
-  mutable std::mutex
-      received_sequences_mutex_; // Make mutable for const methods
+  std::mutex received_sequences_mutex_;
+  std::mutex recent_naks_mutex_;
   std::mutex callback_mutex_;
 
   // helper to check if a sequence number is within a window, accounting for
   // wraparound
   bool is_sequence_in_window(uint8_t seq, uint8_t window_start,
-                             uint8_t window_size) const {
-    for (uint8_t i = 0; i < window_size; i++) {
-      if (seq == ((window_start + i) & 0xFF)) { // handle wrap-around with &0xFF
-        return true;
-      }
-    }
-    return false;
-  }
+                             uint8_t window_size) const;
+
+  // Clean up old entries in tracking maps
+  void cleanup_old_entries();
+  void handle_cleanup_timer();
 
   bool running_;
+  bool send_acks_;   // Base station mode: true, Rover mode: false
+  bool expect_acks_; // Base station mode: false, Rover mode: true
+
+  // Constants
+  static constexpr std::chrono::milliseconds NAK_DEBOUNCE_TIME{
+      500}; // Don't send NAKs too frequently
+  static constexpr std::chrono::milliseconds CLEANUP_INTERVAL{
+      5000}; // Clean up old tracking entries every 5 seconds
+  static constexpr std::chrono::milliseconds SEQUENCE_RETAIN_TIME{
+      10000}; // Keep received sequences for 10 seconds
 };

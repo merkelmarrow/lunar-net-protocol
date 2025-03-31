@@ -36,6 +36,7 @@ public:
   std::string get_connected_rover_id() const;
 
   void send_raw_message(const Message &message, const udp::endpoint &endpoint);
+  void send_command(const std::string &command, const std::string &params);
 
 private:
   void handle_message(std::unique_ptr<Message> message,
@@ -45,8 +46,6 @@ private:
                            const udp::endpoint &sender);
   void handle_session_confirm(const std::string &rover_id,
                               const udp::endpoint &sender);
-
-  void send_command(const std::string &command, const std::string &params);
 
   boost::asio::io_context &io_context_;
   std::unique_ptr<UdpServer> server_;

@@ -3,6 +3,7 @@
 #include "reliability_manager.hpp"
 #include "lumen_header.hpp"
 #include "lumen_packet.hpp"
+#include <algorithm>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/detail/error_category.hpp>
 #include <boost/system/detail/error_code.hpp>
@@ -14,10 +15,11 @@
 
 #include "configs.hpp"
 
-ReliabilityManager::ReliabilityManager(boost::asio::io_context &io_context)
-    : next_expected_sequence_(0),
-      retransmit_timer_(io_context, RELIABILITY_CHECK_INTERVAL),
-      running_(false) {}
+ReliabilityManager::ReliabilityManager(boost::asio::io_context &io_context,
+                                       bool send_acks, bool expect_acks)
+    : retransmit_timer_(io_context, RELIABILITY_CHECK_INTERVAL),
+      cleanup_timer_(io_context, CLEANUP_INTERVAL), running_(false),
+      send_acks_(send_acks), expect_acks_(expect_acks) {}
 
 ReliabilityManager::~ReliabilityManager() { stop(); }
 
@@ -37,12 +39,23 @@ void ReliabilityManager::start() {
   {
     std::lock_guard<std::mutex> recv_lock(received_sequences_mutex_);
     received_sequences_.clear();
-    next_expected_sequence_ = 0;
   }
 
+  {
+    std::lock_guard<std::mutex> nak_lock(recent_naks_mutex_);
+    recent_naks_.clear();
+  }
+
+  // Start the retransmission timer
   handle_retransmission_timer();
 
-  std::cout << "[RELIABILITY] Manager started." << std::endl;
+  // Start the cleanup timer
+  handle_cleanup_timer();
+
+  std::cout << "[RELIABILITY] Manager started with send_acks="
+            << (send_acks_ ? "true" : "false")
+            << ", expect_acks=" << (expect_acks_ ? "true" : "false")
+            << std::endl;
 }
 
 void ReliabilityManager::stop() {
@@ -52,9 +65,10 @@ void ReliabilityManager::stop() {
 
   running_ = false;
 
-  // cancel timer
+  // cancel timers
   boost::system::error_code ec;
   retransmit_timer_.cancel(ec);
+  cleanup_timer_.cancel(ec);
 
   std::cout << "[RELIABILITY] Manager stopped." << std::endl;
 }
@@ -67,6 +81,7 @@ void ReliabilityManager::add_send_packet(uint8_t seq, const LumenPacket &packet,
 
   std::lock_guard<std::mutex> lock(sent_packets_mutex_);
 
+  // Store the packet for potential retransmission
   sent_packets_.emplace(
       seq,
       SentPacketInfo{packet, std::chrono::steady_clock::now(), 0, recipient});
@@ -76,7 +91,7 @@ void ReliabilityManager::add_send_packet(uint8_t seq, const LumenPacket &packet,
 }
 
 void ReliabilityManager::process_ack(uint8_t seq) {
-  if (!running_) {
+  if (!running_ || !expect_acks_) {
     return;
   }
 
@@ -87,11 +102,14 @@ void ReliabilityManager::process_ack(uint8_t seq) {
   if (it != sent_packets_.end()) {
     sent_packets_.erase(it);
     std::cout << "[RELIABILITY] Received ACK for seq: " << static_cast<int>(seq)
+              << ", removed from retransmission tracking" << std::endl;
+  } else {
+    std::cout << "[RELIABILITY] Received ACK for seq: " << static_cast<int>(seq)
+              << ", but packet not in tracking (already ACKed or never sent)"
               << std::endl;
   }
 }
 
-// process a NAK
 void ReliabilityManager::process_nak(uint8_t seq) {
   if (!running_) {
     return;
@@ -125,12 +143,6 @@ void ReliabilityManager::process_nak(uint8_t seq) {
   }
 }
 
-// get the next expected sequence number
-uint8_t ReliabilityManager::get_next_expected_sequence() const {
-  std::lock_guard<std::mutex> lock(received_sequences_mutex_);
-  return next_expected_sequence_;
-}
-
 void ReliabilityManager::record_received_sequence(uint8_t seq) {
   if (!running_) {
     return;
@@ -138,61 +150,89 @@ void ReliabilityManager::record_received_sequence(uint8_t seq) {
 
   std::lock_guard<std::mutex> lock(received_sequences_mutex_);
 
-  // add to received sequences set
-  received_sequences_.insert(seq);
-
-  // check if this is the next expected sequence
-  if (seq == next_expected_sequence_) {
-    // find the next gap in sequence numbers
-    uint8_t temp = next_expected_sequence_;
-    do {
-      temp = (temp + 1) & 0xFF; // increment with wrap-around
-    } while (received_sequences_.find(temp) != received_sequences_.end());
-
-    next_expected_sequence_ = temp;
-
-    // clean up received_sequences_ by removing acknowledged sequences
-    auto it = received_sequences_.begin();
-    while (it != received_sequences_.end()) {
-      uint8_t received_seq = *it;
-
-      // check if this sequence is before next_expected_sequence_
-      bool is_before_next = false;
-      if (next_expected_sequence_ > received_seq) {
-        // no wrap-around
-        if (next_expected_sequence_ - received_seq < 128) {
-          is_before_next = true;
-        }
-      } else if (next_expected_sequence_ < received_seq) {
-        // wrap-around
-        if (received_seq - next_expected_sequence_ > 128) {
-          is_before_next = true;
-        }
-      }
-
-      if (is_before_next) {
-        it = received_sequences_.erase(it);
-      } else {
-        ++it;
-      }
-    }
-
-    std::cout << "[RELIABILITY] Updated next expected sequence to: "
-              << static_cast<int>(next_expected_sequence_) << std::endl;
-  }
+  // Record this sequence with current timestamp
+  received_sequences_[seq] = std::chrono::steady_clock::now();
 }
 
-LumenPacket ReliabilityManager::generate_nak_packet(uint8_t seq) {
-  // Create a NAK payload with the sequence number
-  std::vector<uint8_t> nak_payload = {seq};
+std::vector<uint8_t>
+ReliabilityManager::get_missing_sequences(uint8_t current_seq,
+                                          uint8_t window_size) {
+  std::lock_guard<std::mutex> lock(received_sequences_mutex_);
 
-  // Create a NAK header
-  LumenHeader header(LumenHeader::MessageType::NAK, LumenHeader::Priority::HIGH,
-                     0, // Use sequence 0 for NAK packets
-                     0, // Use timestamp 0 for NAK packets
-                     static_cast<uint16_t>(nak_payload.size()));
+  std::vector<uint8_t> missing_seqs;
 
-  return LumenPacket(header, nak_payload);
+  // Calculate window start accounting for wraparound
+  uint8_t window_start = current_seq - window_size;
+
+  // Look for gaps in the sequence numbers within our window
+  for (uint8_t i = 0; i < window_size; i++) {
+    uint8_t seq = static_cast<uint8_t>(window_start + i);
+
+    // Skip the current sequence or if it's equal to or beyond current_seq
+    if (seq == current_seq || static_cast<int8_t>(seq - current_seq) >= 0) {
+      continue;
+    }
+
+    // Check if this sequence is missing
+    if (received_sequences_.find(seq) == received_sequences_.end()) {
+      // Only consider it missing if we've seen a higher sequence number for at
+      // least 50ms This helps with jitter by avoiding requesting packets that
+      // might simply be delayed
+      auto now = std::chrono::steady_clock::now();
+      bool have_later_seq = false;
+
+      for (uint8_t j = 1; j <= 10; j++) { // Check next 10 sequence numbers
+        uint8_t later_seq = static_cast<uint8_t>(seq + j);
+        auto it = received_sequences_.find(later_seq);
+        if (it != received_sequences_.end()) {
+          auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+              now - it->second);
+          if (elapsed.count() >= 50) { // 50ms jitter allowance
+            have_later_seq = true;
+            break;
+          }
+        }
+      }
+
+      if (have_later_seq) {
+        missing_seqs.push_back(seq);
+      }
+    }
+  }
+
+  return missing_seqs;
+}
+
+bool ReliabilityManager::is_recently_naked(uint8_t seq) {
+  std::lock_guard<std::mutex> lock(recent_naks_mutex_);
+
+  auto it = recent_naks_.find(seq);
+  if (it == recent_naks_.end()) {
+    return false;
+  }
+
+  // Check if we've sent a NAK for this sequence recently
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
+
+  return elapsed < NAK_DEBOUNCE_TIME;
+}
+
+void ReliabilityManager::record_nak_sent(uint8_t seq) {
+  std::lock_guard<std::mutex> lock(recent_naks_mutex_);
+  recent_naks_[seq] = std::chrono::steady_clock::now();
+}
+
+bool ReliabilityManager::is_sequence_in_window(uint8_t seq,
+                                               uint8_t window_start,
+                                               uint8_t window_size) const {
+  for (uint8_t i = 0; i < window_size; i++) {
+    if (seq == static_cast<uint8_t>(window_start + i)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // get messages that need retransmission
@@ -215,6 +255,9 @@ ReliabilityManager::get_packets_to_retransmit() {
     auto timeout = RELIABILITY_BASE_TIMEOUT * (1 << info.retry_count);
 
     if (elapsed > timeout) {
+      // Only retry if we're expecting ACKs (i.e., we're in ROVER mode)
+      // or we're in BASE_STATION mode (which expects NAKs, but we still need
+      // timeouts)
       if (info.retry_count >= RELIABILITY_MAX_RETRIES) {
         std::cout << "[RELIABILITY] Max retries reached for seq: "
                   << static_cast<int>(it->first) << ", giving up." << std::endl;
@@ -240,6 +283,57 @@ ReliabilityManager::get_packets_to_retransmit() {
   }
 
   return packets_to_retransmit;
+}
+
+void ReliabilityManager::cleanup_old_entries() {
+  auto now = std::chrono::steady_clock::now();
+
+  // Clean up old received sequences
+  {
+    std::lock_guard<std::mutex> lock(received_sequences_mutex_);
+    for (auto it = received_sequences_.begin();
+         it != received_sequences_.end();) {
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          now - it->second);
+      if (elapsed > SEQUENCE_RETAIN_TIME) {
+        it = received_sequences_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  // Clean up old NAK records
+  {
+    std::lock_guard<std::mutex> lock(recent_naks_mutex_);
+    for (auto it = recent_naks_.begin(); it != recent_naks_.end();) {
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          now - it->second);
+      if (elapsed > NAK_DEBOUNCE_TIME * 2) { // Keep for twice the debounce time
+        it = recent_naks_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+}
+
+void ReliabilityManager::handle_cleanup_timer() {
+  if (!running_) {
+    return;
+  }
+
+  cleanup_old_entries();
+
+  // Reschedule the timer
+  if (running_) {
+    cleanup_timer_.expires_at(cleanup_timer_.expiry() + CLEANUP_INTERVAL);
+    cleanup_timer_.async_wait([this](const boost::system::error_code &error) {
+      if (!error && running_) {
+        handle_cleanup_timer();
+      }
+    });
+  }
 }
 
 // set callback for packet retransmission

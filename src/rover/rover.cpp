@@ -8,18 +8,18 @@
 Rover::Rover(boost::asio::io_context &io_context, const std::string &base_host,
              int base_port, const std::string &rover_id)
     : io_context_(io_context), status_timer_(io_context),
-      session_state_(SessionState::INACTIVE), rover_id_(rover_id),
+      handshake_timer_(io_context), session_state_(SessionState::INACTIVE),
+      rover_id_(rover_id),
       current_status_level_(StatusMessage::StatusLevel::OK),
-      current_status_description_("System nominal") {
+      current_status_description_("System nominal"), handshake_retry_count_(0) {
   // initialize UDP client
   client_ = std::make_unique<UdpClient>(io_context);
 
   // register base station endpoint
   client_->register_base(base_host, base_port);
 
-  // initialize protocol layer
-  protocol_ =
-      std::make_unique<LumenProtocol>(io_context, *client_, false, true);
+  // initialize protocol layer - rover sends NAKs (not ACKs) and expects ACKs
+  protocol_ = std::make_unique<LumenProtocol>(io_context, *client_);
 
   // initialize message manager with client reference
   message_manager_ = std::make_unique<MessageManager>(
@@ -58,6 +58,9 @@ void Rover::start() {
 void Rover::stop() {
   // stop status timer
   status_timer_.cancel();
+
+  // stop handshake timer
+  handshake_timer_.cancel();
 
   // stop in reverse order of initialization
   if (message_manager_)
@@ -135,6 +138,12 @@ void Rover::handle_message(std::unique_ptr<Message> message,
             << "[ROVER] Received explicit SESSION_ESTABLISHED confirmation"
             << std::endl;
       }
+
+      // Reset retry counter
+      handshake_retry_count_ = 0;
+
+      // Start the status timer to send status every 10 seconds
+      handle_status_timer();
     }
     // handle other commands here
   }
@@ -187,6 +196,57 @@ void Rover::initiate_handshake() {
   send_command("SESSION_INIT", rover_id_);
 
   std::cout << "[ROVER] Sent SESSION_INIT to base station" << std::endl;
+
+  // Start a timer to retry handshake if no response
+  handshake_timer_.expires_after(std::chrono::seconds(5));
+  handshake_timer_.async_wait([this](const boost::system::error_code &ec) {
+    if (!ec) {
+      handle_handshake_timer();
+    }
+  });
+}
+
+void Rover::handle_handshake_timer() {
+  SessionState current_state;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    current_state = session_state_;
+  }
+
+  // If we're still in HANDSHAKE_INIT or HANDSHAKE_ACCEPT state, retry
+  if (current_state == SessionState::HANDSHAKE_INIT ||
+      current_state == SessionState::HANDSHAKE_ACCEPT) {
+
+    if (handshake_retry_count_ < MAX_HANDSHAKE_RETRIES) {
+      handshake_retry_count_++;
+      std::cout << "[ROVER] Handshake timeout, retrying (attempt "
+                << handshake_retry_count_ << "/" << MAX_HANDSHAKE_RETRIES << ")"
+                << std::endl;
+
+      if (current_state == SessionState::HANDSHAKE_INIT) {
+        // Retry sending SESSION_INIT
+        send_command("SESSION_INIT", rover_id_);
+      } else if (current_state == SessionState::HANDSHAKE_ACCEPT) {
+        // Retry sending SESSION_CONFIRM
+        send_command("SESSION_CONFIRM", rover_id_);
+      }
+
+      // Schedule next retry
+      handshake_timer_.expires_after(std::chrono::seconds(5));
+      handshake_timer_.async_wait([this](const boost::system::error_code &ec) {
+        if (!ec) {
+          handle_handshake_timer();
+        }
+      });
+    } else {
+      std::cout << "[ROVER] Handshake failed after " << MAX_HANDSHAKE_RETRIES
+                << " attempts. Giving up." << std::endl;
+
+      // Reset state to INACTIVE
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      session_state_ = SessionState::INACTIVE;
+    }
+  }
 }
 
 void Rover::handle_session_accept() {
@@ -216,6 +276,9 @@ void Rover::handle_session_accept() {
   }
 
   std::cout << "[ROVER] Session established with base station" << std::endl;
+
+  // Reset handshake retry count
+  handshake_retry_count_ = 0;
 
   // start the status timer to send status every 10 seconds
   handle_status_timer();

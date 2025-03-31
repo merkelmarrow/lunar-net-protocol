@@ -1,3 +1,5 @@
+// include/common/lumen_protocol.hpp
+
 #pragma once
 
 #include <atomic>
@@ -6,7 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <optional>
+#include <queue>
 #include <unordered_map>
 #include <vector>
 
@@ -21,13 +23,16 @@ using boost::asio::ip::udp;
 
 class LumenProtocol {
 public:
+  enum class ProtocolMode {
+    BASE_STATION, // Sends ACKs, expects NAKs
+    ROVER         // Sends NAKs, expects ACKs
+  };
+
   // constructor for base station
-  LumenProtocol(boost::asio::io_context &io_context, UdpServer &server,
-                bool send_acks = true, bool use_nak = false);
+  LumenProtocol(boost::asio::io_context &io_context, UdpServer &server);
 
   // constructor for rover
-  LumenProtocol(boost::asio::io_context &io_context, UdpClient &client,
-                bool send_acks = false, bool use_nak = true);
+  LumenProtocol(boost::asio::io_context &io_context, UdpClient &client);
 
   // destructor
   ~LumenProtocol();
@@ -45,16 +50,13 @@ public:
                          const udp::endpoint &)>
           callback);
 
-  // get current outgoing sequence number
+  // Get current sequence number
   uint8_t get_current_sequence() const;
 
 private:
-  enum class Mode { SERVER, CLIENT };
-
   void handle_udp_data(const std::vector<uint8_t> &data,
                        const udp::endpoint &endpoint);
 
-  // process a complete packet extracted from the frame buffer.
   void process_complete_packet(const LumenPacket &packet,
                                const udp::endpoint &endpoint);
 
@@ -72,19 +74,29 @@ private:
   void handle_retransmission(const LumenPacket &packet,
                              const udp::endpoint &endpoint);
 
-  // helper to deliver a packet to the registered callback.
-  void deliver_packet(const LumenPacket &packet, const udp::endpoint &endpoint);
+  // Process frame buffers
+  void process_frame_buffer(const std::string &endpoint_key,
+                            const udp::endpoint &endpoint);
+
+  // Get endpoint key string
+  std::string get_endpoint_key(const udp::endpoint &endpoint) const;
+
+  // Check for sequence gap and send NAK if needed (rover only)
+  void check_sequence_gaps(uint8_t received_seq, const udp::endpoint &endpoint);
 
   // references to lower layers
-  Mode mode_;
+  ProtocolMode mode_;
   UdpServer *server_;
   UdpClient *client_;
 
-  // frame buffer for reassembly (unchanged)
+  // frame buffer for reassembly - keyed by endpoint
   std::unordered_map<std::string, std::vector<uint8_t>> frame_buffers_;
 
-  // Outgoing sequence number management.
-  std::atomic<uint8_t> send_sequence_;
+  // sequence number management
+  std::atomic<uint8_t> current_sequence_;
+
+  // Track last sender endpoint per buffer
+  std::unordered_map<std::string, udp::endpoint> endpoint_map_;
 
   // reliability management
   std::unique_ptr<ReliabilityManager> reliability_manager_;
@@ -94,24 +106,16 @@ private:
                      const udp::endpoint &)>
       message_callback_;
 
+  // Mutex for thread safety
   std::mutex frame_buffers_mutex_;
   std::mutex callback_mutex_;
-
-  bool send_acks_;
-  bool use_nak_;
+  std::mutex endpoint_mutex_;
 
   bool running_;
 
   // IO context reference
   boost::asio::io_context &io_context_;
 
-  void process_frame_buffer_for_sender(const std::string &sender_key,
-                                       const udp::endpoint &endpoint);
-
-  // Endpoint tracking for frame buffer
-  udp::endpoint buffer_sender_endpoint_;
-
-  // for each sender, we record the last delivered (non–control) sequence.
-  std::unordered_map<std::string, uint8_t> last_delivered_;
-  std::mutex last_delivered_mutex_;
+  // Sliding window for sequence number tracking
+  static constexpr uint8_t WINDOW_SIZE = 32;
 };
