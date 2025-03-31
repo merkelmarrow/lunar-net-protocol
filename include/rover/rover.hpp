@@ -42,17 +42,16 @@ public:
   SessionState get_session_state() const;
 
   void send_raw_message(const Message &message, const udp::endpoint &endpoint);
-
-private:
-  // handle incoming messages
-  void handle_message(std::unique_ptr<Message> message,
-                      const udp::endpoint &sender);
-
   // send status message
   void send_status();
 
   // send a command message
   void send_command(const std::string &command, const std::string &params);
+
+private:
+  // handle incoming messages
+  void handle_message(std::unique_ptr<Message> message,
+                      const udp::endpoint &sender);
 
   // handshake methods
   void initiate_handshake();
