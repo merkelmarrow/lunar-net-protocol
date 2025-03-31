@@ -13,7 +13,7 @@
 LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
                              UdpServer &server, bool send_acks, bool use_nak)
     : mode_(Mode::SERVER), server_(&server), client_(nullptr),
-      send_sequence_(0), incoming_expected_sequence_(0),
+      send_sequence_(0),
       reliability_manager_(std::make_unique<ReliabilityManager>(io_context)),
       send_acks_(send_acks), use_nak_(use_nak), running_(false),
       io_context_(io_context), buffer_sender_endpoint_(udp::endpoint()) {
@@ -35,7 +35,7 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
 LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
                              UdpClient &client, bool send_acks, bool use_nak)
     : mode_(Mode::CLIENT), server_(nullptr), client_(&client),
-      send_sequence_(0), incoming_expected_sequence_(0),
+      send_sequence_(0),
       reliability_manager_(std::make_unique<ReliabilityManager>(io_context)),
       send_acks_(send_acks), use_nak_(use_nak), running_(false),
       io_context_(io_context), buffer_sender_endpoint_(udp::endpoint()) {
@@ -95,7 +95,6 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
     return;
   }
 
-  // Use send_sequence_ for outgoing packets.
   uint8_t seq = send_sequence_.fetch_add(1);
   uint32_t timestamp = generate_timestamp();
   LumenHeader header(type, priority, seq, timestamp,
@@ -142,15 +141,12 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
 
   std::string sender_key =
       endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
-  // add data to frame buffer
   {
     std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
-    // append the received data to the sender-specific buffer.
     frame_buffers_[sender_key].insert(frame_buffers_[sender_key].end(),
                                       data.begin(), data.end());
   }
 
-  // process frame buffer to extract complete packets
   process_frame_buffer_for_sender(sender_key, endpoint);
 }
 
@@ -159,16 +155,14 @@ void LumenProtocol::process_frame_buffer_for_sender(
   std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
   auto &buffer = frame_buffers_[sender_key];
 
-  // Discard any bytes before the start-of-transmission marker (STX)
+  // discard any bytes before the start-of-transmission marker (STX)
   while (!buffer.empty() && static_cast<uint8_t>(buffer.front()) != LUMEN_STX) {
     buffer.erase(buffer.begin());
   }
 
-  // process complete packets in the sender's specific buffer
   while (!buffer.empty()) {
     auto packet_opt = LumenPacket::from_bytes(buffer);
     if (!packet_opt) {
-      // there's no complete packet yet, leave the partial data
       break;
     }
     LumenPacket packet = *packet_opt;
@@ -178,11 +172,9 @@ void LumenProtocol::process_frame_buffer_for_sender(
     } else {
       break;
     }
-    // process the complete extracted packet
     process_complete_packet(packet, endpoint);
   }
 
-  // prevent buffer overflow
   if (buffer.size() > MAX_FRAME_BUFFER_SIZE) {
     std::cerr << "[LUMEN] Frame buffer overflow for sender " << sender_key
               << ", clearing buffer" << std::endl;
@@ -190,48 +182,12 @@ void LumenProtocol::process_frame_buffer_for_sender(
   }
 }
 
-void LumenProtocol::process_complete_packet(const LumenPacket &packet,
-                                            const udp::endpoint &endpoint) {
+// helper function to deliver a packet to the registered callback.
+void LumenProtocol::deliver_packet(const LumenPacket &packet,
+                                   const udp::endpoint &endpoint) {
   const LumenHeader &header = packet.get_header();
-  const std::vector<uint8_t> &payload = packet.get_payload();
-  LumenHeader::MessageType type = header.get_type();
-  uint8_t seq = header.get_sequence();
+  const std::vector<uint8_t> payload = packet.get_payload();
 
-  std::cout << "[LUMEN] Received packet with seq: " << static_cast<int>(seq)
-            << ", type: " << static_cast<int>(static_cast<uint8_t>(type))
-            << ", size: " << payload.size() << " from " << endpoint
-            << std::endl;
-
-  // process control packets separately
-  if (type == LumenHeader::MessageType::ACK) {
-    if (!payload.empty()) {
-      uint8_t acked_seq = payload[0];
-      reliability_manager_->process_ack(acked_seq);
-    }
-    // do not update incoming_expected_sequence_ for control packets.
-    return;
-  } else if (type == LumenHeader::MessageType::NAK) {
-    if (!payload.empty()) {
-      uint8_t requested_seq = payload[0];
-      reliability_manager_->process_nak(requested_seq);
-    }
-    return;
-  }
-
-  // 2. for non–control messages, enforce in–order delivery
-  if (seq != incoming_expected_sequence_.load()) {
-    std::cout << "[LUMEN] Out-of-order packet: expected seq "
-              << static_cast<int>(incoming_expected_sequence_.load())
-              << " but got " << static_cast<int>(seq) << std::endl;
-    if (use_nak_) {
-      send_nak(incoming_expected_sequence_.load(), endpoint);
-    }
-    return; // drop out-of-order packet
-  }
-  // the packet is in order: update expected sequence (wrap-around)
-  incoming_expected_sequence_ = (incoming_expected_sequence_.load() + 1) & 0xFF;
-
-  // 3. Deliver the packet payload to the callback
   std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
                      const udp::endpoint &)>
       callback_copy;
@@ -244,13 +200,88 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
   }
 }
 
+void LumenProtocol::process_complete_packet(const LumenPacket &packet,
+                                            const udp::endpoint &endpoint) {
+  const LumenHeader &header = packet.get_header();
+  uint8_t pkt_seq = header.get_sequence();
+  LumenHeader::MessageType type = header.get_type();
+
+  // create a sender key (IP:port) to index incoming state.
+  std::string sender_key =
+      endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
+
+  // 1. process control packets immediately
+  if (type == LumenHeader::MessageType::ACK) {
+    if (!packet.get_payload().empty()) {
+      uint8_t acked_seq = packet.get_payload()[0];
+      reliability_manager_->process_ack(acked_seq);
+    }
+    return;
+  } else if (type == LumenHeader::MessageType::NAK) {
+    if (!packet.get_payload().empty()) {
+      uint8_t requested_seq = packet.get_payload()[0];
+      reliability_manager_->process_nak(requested_seq);
+    }
+    return;
+  }
+
+  // 2. get (or create) the incoming state for this sender
+  {
+    std::lock_guard<std::mutex> lock(incoming_states_mutex_);
+    if (incoming_states_.find(sender_key) == incoming_states_.end()) {
+      IncomingState state;
+      state.expected_seq = pkt_seq;
+      incoming_states_[sender_key] = state;
+    }
+  }
+
+  // 3. process non–control packets using per–sender state
+  {
+    std::unique_lock<std::mutex> lock(incoming_states_mutex_);
+    IncomingState &state = incoming_states_[sender_key];
+    uint8_t expected = state.expected_seq;
+
+    int diff = static_cast<int>(pkt_seq) - static_cast<int>(expected);
+    if (diff < 0)
+      diff += 256;
+
+    if (diff == 0) {
+      lock.unlock();
+      deliver_packet(packet, endpoint);
+      lock.lock();
+      state.expected_seq = (state.expected_seq + 1) & 0xFF;
+      while (true) {
+        auto it = state.buffered_packets.find(state.expected_seq);
+        if (it == state.buffered_packets.end())
+          break;
+        LumenPacket next_packet = it->second;
+        state.buffered_packets.erase(it);
+        lock.unlock();
+        deliver_packet(next_packet, endpoint);
+        lock.lock();
+        state.expected_seq = (state.expected_seq + 1) & 0xFF;
+      }
+    } else if (diff < 128) { // packet is ahead of expected.
+      if (state.buffered_packets.find(pkt_seq) ==
+          state.buffered_packets.end()) {
+        state.buffered_packets[pkt_seq] = packet;
+        std::cout << "[LUMEN] Buffered out-of-order packet: got "
+                  << static_cast<int>(pkt_seq) << " but expected "
+                  << static_cast<int>(expected) << std::endl;
+        send_nak(expected, endpoint);
+      }
+    } else {
+      std::cout << "[LUMEN] Dropping duplicate/old packet with seq: "
+                << static_cast<int>(pkt_seq) << std::endl;
+    }
+  }
+}
+
 void LumenProtocol::send_packet(const LumenPacket &packet,
                                 const udp::endpoint &recipient) {
-  // serialize packet to bytes
   std::vector<uint8_t> data = packet.to_bytes();
 
   try {
-    // send with appropriate mode
     if (mode_ == Mode::SERVER) {
       server_->send_data(data, recipient);
     } else {
@@ -262,14 +293,11 @@ void LumenProtocol::send_packet(const LumenPacket &packet,
 }
 
 void LumenProtocol::send_ack(uint8_t seq, const udp::endpoint &recipient) {
-  // create ACK payload with sequence number (echoing the received seq)
   std::vector<uint8_t> ack_payload = {seq};
   uint32_t timestamp = generate_timestamp();
-  // Use seq directly for the ACK header.
   LumenHeader ack_header(LumenHeader::MessageType::ACK,
-                         LumenHeader::Priority::HIGH,
-                         seq, // echo the sequence being acknowledged
-                         timestamp, static_cast<uint16_t>(ack_payload.size()));
+                         LumenHeader::Priority::HIGH, seq, timestamp,
+                         static_cast<uint16_t>(ack_payload.size()));
   LumenPacket ack_packet(ack_header, ack_payload);
   send_packet(ack_packet, recipient);
 
@@ -278,13 +306,11 @@ void LumenProtocol::send_ack(uint8_t seq, const udp::endpoint &recipient) {
 }
 
 void LumenProtocol::send_nak(uint8_t seq, const udp::endpoint &recipient) {
-  // create NAK payload with the expected sequence number.
   std::vector<uint8_t> nak_payload = {seq};
   uint32_t timestamp = generate_timestamp();
   LumenHeader nak_header(LumenHeader::MessageType::NAK,
-                         LumenHeader::Priority::HIGH,
-                         seq, // use expected sequence number
-                         timestamp, static_cast<uint16_t>(nak_payload.size()));
+                         LumenHeader::Priority::HIGH, seq, timestamp,
+                         static_cast<uint16_t>(nak_payload.size()));
   LumenPacket nak_packet(nak_header, nak_payload);
   send_packet(nak_packet, recipient);
 
@@ -293,13 +319,10 @@ void LumenProtocol::send_nak(uint8_t seq, const udp::endpoint &recipient) {
 }
 
 uint32_t LumenProtocol::generate_timestamp() const {
-  // get current time as milliseconds since epoch
   auto now = std::chrono::system_clock::now();
   auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now.time_since_epoch())
                     .count();
-
-  // return as 32-bit timestamp
   return static_cast<uint32_t>(millis & 0xFFFFFFFF);
 }
 
@@ -308,7 +331,5 @@ void LumenProtocol::handle_retransmission(const LumenPacket &packet,
   std::cout << "[LUMEN] Retransmitting packet with seq: "
             << static_cast<int>(packet.get_header().get_sequence()) << " to "
             << endpoint << std::endl;
-
-  // resend the packet
   send_packet(packet, endpoint);
 }
