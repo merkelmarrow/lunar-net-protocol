@@ -11,9 +11,10 @@
 
 MessageManager::MessageManager(boost::asio::io_context &io_context,
                                LumenProtocol &protocol,
-                               const std::string &sender_id)
+                               const std::string &sender_id, UdpServer *server,
+                               UdpClient *client)
     : io_context_(io_context), protocol_(protocol), sender_id_(sender_id),
-      running_(false) {}
+      running_(false), server_(server), client_(client) {}
 
 MessageManager::~MessageManager() { stop(); }
 
@@ -113,4 +114,31 @@ std::vector<uint8_t> MessageManager::string_to_binary(const std::string &str) {
 
 std::string MessageManager::binary_to_string(const std::vector<uint8_t> &data) {
   return std::string(data.begin(), data.end());
+}
+
+void MessageManager::send_raw_message(const Message &message,
+                                      const udp::endpoint &recipient) {
+  if (!running_) {
+    std::cerr << "[ERROR] Message manager not running." << std::endl;
+    return;
+  }
+
+  // serialize the message to JSON
+  std::string json_str = message.serialise();
+
+  // convert to binary
+  std::vector<uint8_t> data = string_to_binary(json_str);
+
+  // send directly via appropriate channel
+  if (server_) {
+    server_->send_data(data, recipient);
+    std::cout << "[MESSAGE MANAGER] Sent raw message type: "
+              << message.get_type() << " to " << recipient << std::endl;
+  } else if (client_) {
+    client_->send_data_to(data, recipient);
+    std::cout << "[MESSAGE MANAGER] Sent raw message type: "
+              << message.get_type() << " to " << recipient << std::endl;
+  } else {
+    std::cerr << "[ERROR] No sender available for raw message" << std::endl;
+  }
 }

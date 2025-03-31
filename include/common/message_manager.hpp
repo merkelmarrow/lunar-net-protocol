@@ -15,7 +15,8 @@
 class MessageManager {
 public:
   MessageManager(boost::asio::io_context &io_context, LumenProtocol &protocol,
-                 const std::string &sender_id);
+                 const std::string &sender_id, UdpServer *server = nullptr,
+                 UdpClient *client = nullptr);
 
   ~MessageManager();
 
@@ -29,6 +30,8 @@ public:
   void set_message_callback(
       std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>
           callback);
+
+  void send_raw_message(const Message &message, const udp::endpoint &recipient);
 
 private:
   // handle binary data from lumen protocol layer
@@ -53,4 +56,7 @@ private:
   std::mutex callback_mutex_;
 
   bool running_;
+
+  UdpServer *server_;
+  UdpClient *client_;
 };

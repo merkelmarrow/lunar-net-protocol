@@ -40,6 +40,9 @@ public:
   // to start
   void send_data(const std::vector<uint8_t> &data);
 
+  void send_data_to(const std::vector<uint8_t> &data,
+                    const udp::endpoint &recipient);
+
   // sets the callback to receive messages
   // the callback function will be called whenever a message is received
   // the callback should handle/process the message string

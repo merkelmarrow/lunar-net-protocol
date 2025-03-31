@@ -41,6 +41,8 @@ public:
   // session state
   SessionState get_session_state() const;
 
+  void send_raw_message(const Message &message, const udp::endpoint &endpoint);
+
 private:
   // handle incoming messages
   void handle_message(std::unique_ptr<Message> message,

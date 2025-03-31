@@ -149,3 +149,23 @@ void UdpClient::do_receive() {
                                handle_receive(error, bytes_transferred);
                              });
 }
+
+void UdpClient::send_data_to(const std::vector<uint8_t> &data,
+                             const udp::endpoint &recipient) {
+  try {
+    socket_.async_send_to(
+        boost::asio::buffer(data), recipient,
+        [](const boost::system::error_code &error, std::size_t bytes_sent) {
+          if (error) {
+            std::cerr << "[ERROR] Failed to send data: " << error.message()
+                      << std::endl;
+          } else {
+            std::cout << "[CLIENT] Sent " << bytes_sent
+                      << " bytes to custom endpoint." << std::endl;
+          }
+        });
+  } catch (const std::exception &error) {
+    std::cerr << "[ERROR] Send error: " << error.what() << std::endl;
+    throw;
+  }
+}

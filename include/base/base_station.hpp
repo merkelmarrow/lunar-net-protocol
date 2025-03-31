@@ -35,6 +35,8 @@ public:
   SessionState get_session_state() const;
   std::string get_connected_rover_id() const;
 
+  void send_raw_message(const Message &message, const udp::endpoint &endpoint);
+
 private:
   void handle_message(std::unique_ptr<Message> message,
                       const udp::endpoint &sender);

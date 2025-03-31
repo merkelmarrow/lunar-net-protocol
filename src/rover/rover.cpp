@@ -21,9 +21,9 @@ Rover::Rover(boost::asio::io_context &io_context, const std::string &base_host,
   protocol_ =
       std::make_unique<LumenProtocol>(io_context, *client_, false, true);
 
-  // initialize message manager
-  message_manager_ =
-      std::make_unique<MessageManager>(io_context, *protocol_, rover_id);
+  // initialize message manager with client reference
+  message_manager_ = std::make_unique<MessageManager>(
+      io_context, *protocol_, rover_id, nullptr, client_.get());
 
   std::cout << "[ROVER] Initialized with ID: " << rover_id
             << ", connecting to base at: " << base_host << ":" << base_port
@@ -232,4 +232,9 @@ void Rover::handle_status_timer() {
       }
     });
   }
+}
+
+void Rover::send_raw_message(const Message &message,
+                             const udp::endpoint &endpoint) {
+  message_manager_->send_raw_message(message, endpoint);
 }

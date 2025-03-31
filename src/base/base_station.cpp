@@ -10,16 +10,16 @@ BaseStation::BaseStation(boost::asio::io_context &io_context, int port,
                          const std::string &station_id)
     : io_context_(io_context), session_state_(SessionState::INACTIVE),
       station_id_(station_id) {
-  // initialise udp sercer
+  // initialize UDP server
   server_ = std::make_unique<UdpServer>(io_context, port);
 
-  // initialise the protocol layer
+  // initialize the protocol layer
   protocol_ =
       std::make_unique<LumenProtocol>(io_context, *server_, true, false);
 
-  // initialise the message manager
-  message_manager_ =
-      std::make_unique<MessageManager>(io_context, *protocol_, station_id);
+  // initialize the message manager with server reference
+  message_manager_ = std::make_unique<MessageManager>(
+      io_context, *protocol_, station_id, server_.get());
 
   std::cout << "[BASE STATION] Initialized on port " << port
             << " with ID: " << station_id << std::endl;
@@ -236,4 +236,9 @@ void BaseStation::send_command(const std::string &command,
 
     message_manager_->send_message(cmd_msg, rover_endpoint_);
   }
+}
+
+void BaseStation::send_raw_message(const Message &message,
+                                   const udp::endpoint &endpoint) {
+  message_manager_->send_raw_message(message, endpoint);
 }
