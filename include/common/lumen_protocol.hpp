@@ -1,5 +1,3 @@
-// include/common/lumen_protocol.hpp
-
 #pragma once
 
 #include <atomic>
@@ -45,7 +43,7 @@ public:
                          const udp::endpoint &)>
           callback);
 
-  // Get current sequence number
+  // Get current sequence number (for outgoing packets)
   uint8_t get_current_sequence() const;
 
 private:
@@ -79,8 +77,10 @@ private:
   // frame buffer for reassembly
   std::unordered_map<std::string, std::vector<uint8_t>> frame_buffers_;
 
-  // sequence number management
-  std::atomic<uint8_t> current_sequence_;
+  // sequence number management: separate counters for sending and for tracking
+  // incoming packets.
+  std::atomic<uint8_t> send_sequence_;
+  std::atomic<uint8_t> incoming_expected_sequence_;
 
   // reliability management
   std::unique_ptr<ReliabilityManager> reliability_manager_;
