@@ -192,7 +192,6 @@ void LumenProtocol::process_frame_buffer_for_sender(
 
 void LumenProtocol::process_complete_packet(const LumenPacket &packet,
                                             const udp::endpoint &endpoint) {
-  // extract header and payload
   const LumenHeader &header = packet.get_header();
   const std::vector<uint8_t> &payload = packet.get_payload();
   LumenHeader::MessageType type = header.get_type();
@@ -203,28 +202,13 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
             << ", size: " << payload.size() << " from " << endpoint
             << std::endl;
 
-  // Instead of relying on the reliability manager’s record_received_sequence(),
-  // compare the incoming packet’s sequence with our expected incoming sequence.
-  if (seq != incoming_expected_sequence_.load()) {
-    std::cout << "[LUMEN] Out-of-order packet: expected seq "
-              << static_cast<int>(incoming_expected_sequence_.load())
-              << " but got " << static_cast<int>(seq) << std::endl;
-    if (use_nak_) {
-      send_nak(incoming_expected_sequence_.load(), endpoint);
-    }
-    return; // drop the out-of-order packet (or optionally buffer it)
-  } else {
-    // Packet is in order; update expected sequence (with wrap-around)
-    incoming_expected_sequence_ =
-        (incoming_expected_sequence_.load() + 1) & 0xFF;
-  }
-
-  // handle special message types
+  // process control packets separately
   if (type == LumenHeader::MessageType::ACK) {
     if (!payload.empty()) {
       uint8_t acked_seq = payload[0];
       reliability_manager_->process_ack(acked_seq);
     }
+    // do not update incoming_expected_sequence_ for control packets.
     return;
   } else if (type == LumenHeader::MessageType::NAK) {
     if (!payload.empty()) {
@@ -234,12 +218,20 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     return;
   }
 
-  // send ACK if needed
-  if (send_acks_) {
-    send_ack(seq, endpoint);
+  // 2. for non–control messages, enforce in–order delivery
+  if (seq != incoming_expected_sequence_.load()) {
+    std::cout << "[LUMEN] Out-of-order packet: expected seq "
+              << static_cast<int>(incoming_expected_sequence_.load())
+              << " but got " << static_cast<int>(seq) << std::endl;
+    if (use_nak_) {
+      send_nak(incoming_expected_sequence_.load(), endpoint);
+    }
+    return; // drop out-of-order packet
   }
+  // the packet is in order: update expected sequence (wrap-around)
+  incoming_expected_sequence_ = (incoming_expected_sequence_.load() + 1) & 0xFF;
 
-  // Deliver the payload to the message callback.
+  // 3. Deliver the packet payload to the callback
   std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
                      const udp::endpoint &)>
       callback_copy;
@@ -247,7 +239,6 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     std::lock_guard<std::mutex> lock(callback_mutex_);
     callback_copy = message_callback_;
   }
-
   if (callback_copy) {
     callback_copy(payload, header, endpoint);
   }
