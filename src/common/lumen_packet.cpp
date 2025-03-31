@@ -11,9 +11,7 @@
 LumenPacket::LumenPacket(const LumenHeader &header,
                          const std::vector<uint8_t> &payload)
     : header_(header), payload_(payload) {
-  if (header_.get_payload_length() != payload_.size()) {
-    header_.set_payload_length(payload.size());
-  }
+  header_.set_payload_length(payload.size());
 }
 
 std::optional<LumenPacket>

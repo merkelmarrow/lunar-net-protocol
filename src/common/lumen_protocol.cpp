@@ -102,7 +102,7 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
 
   // create header
   LumenHeader header(type, priority, seq, timestamp,
-                     static_cast<uint8_t>(payload.size()));
+                     static_cast<uint16_t>(payload.size()));
 
   // create packet
   LumenPacket packet(header, payload);
@@ -284,7 +284,7 @@ void LumenProtocol::send_ack(uint8_t seq, const udp::endpoint &recipient) {
   uint32_t timestamp = generate_timestamp();
   LumenHeader ack_header(LumenHeader::MessageType::ACK,
                          LumenHeader::Priority::HIGH, current_sequence_++,
-                         timestamp, static_cast<uint8_t>(ack_payload.size()));
+                         timestamp, static_cast<uint16_t>(ack_payload.size()));
 
   // create and send ACK packet
   LumenPacket ack_packet(ack_header, ack_payload);
