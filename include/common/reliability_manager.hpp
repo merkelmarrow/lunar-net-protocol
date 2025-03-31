@@ -30,13 +30,16 @@ public:
 
   // process acknowledgements
   void process_ack(uint8_t seq);
-  void process_sack(const std::vector<uint8_t> &missing_seqs);
+  void process_nak(uint8_t seq);
 
-  // record received sequences for SACK generation
+  // Get the next expected sequence number
+  uint8_t get_next_expected_sequence() const;
+
+  // record received sequences for NAK generation
   void record_received_sequence(uint8_t seq);
 
-  // generate a sack packet
-  LumenPacket generate_sack_packet();
+  // generate a nak packet
+  LumenPacket generate_nak_packet(uint8_t seq);
 
   // get messages that need retransmission
   std::vector<std::pair<LumenPacket, udp::endpoint>>
@@ -74,7 +77,8 @@ private:
       retransmit_callback_;
 
   std::mutex sent_packets_mutex_;
-  std::mutex received_sequences_mutex_;
+  mutable std::mutex
+      received_sequences_mutex_; // Make mutable for const methods
   std::mutex callback_mutex_;
 
   // helper to check if a sequence number is within a window, accounting for

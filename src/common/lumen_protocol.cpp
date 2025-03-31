@@ -10,11 +10,11 @@
 
 // constructor for base station
 LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
-                             UdpServer &server, bool send_acks, bool use_sack)
+                             UdpServer &server, bool send_acks, bool use_nak)
     : mode_(Mode::SERVER), server_(&server), client_(nullptr),
       current_sequence_(0),
       reliability_manager_(std::make_unique<ReliabilityManager>(io_context)),
-      send_acks_(send_acks), use_sack_(true), running_(false),
+      send_acks_(send_acks), use_nak_(use_nak), running_(false),
       io_context_(io_context), buffer_sender_endpoint_(udp::endpoint()) {
 
   // set up retransmission callback
@@ -32,11 +32,11 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
 
 // constructor for rover
 LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
-                             UdpClient &client, bool send_acks, bool use_sack)
+                             UdpClient &client, bool send_acks, bool use_nak)
     : mode_(Mode::CLIENT), server_(nullptr), client_(&client),
       current_sequence_(0),
       reliability_manager_(std::make_unique<ReliabilityManager>(io_context)),
-      send_acks_(send_acks), use_sack_(use_sack), running_(false),
+      send_acks_(send_acks), use_nak_(use_nak), running_(false),
       io_context_(io_context), buffer_sender_endpoint_(udp::endpoint()) {
 
   // set up retransmission callback
@@ -225,9 +225,12 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
       reliability_manager_->process_ack(acked_seq);
     }
     return;
-  } else if (type == LumenHeader::MessageType::SACK) {
-    // handle SACK
-    reliability_manager_->process_sack(payload);
+  } else if (type == LumenHeader::MessageType::NAK) {
+    // handle NAK
+    if (payload.size() >= 1) {
+      uint8_t requested_seq = payload[0];
+      reliability_manager_->process_nak(requested_seq);
+    }
     return;
   }
 
@@ -236,14 +239,21 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     send_ack(seq, endpoint);
   }
 
-  // send SACK if needed
-  if (use_sack_) {
-    send_sack(endpoint);
+  // Check for missing sequences and send NAK if needed
+  if (use_nak_) {
+    // Check if this is an out-of-order packet
+    uint8_t expected_seq = reliability_manager_->get_next_expected_sequence();
+    if (seq != expected_seq &&
+        seq != ((expected_seq - 1) & 0xFF) && // Not the previous sequence
+        seq != ((expected_seq + 1) & 0xFF)) { // Not the next sequence
+      // Send NAK for the expected sequence
+      send_nak(expected_seq, endpoint);
+    }
   }
 
   // skip special control message types for regular processing
   if (type == LumenHeader::MessageType::ACK ||
-      type == LumenHeader::MessageType::SACK) {
+      type == LumenHeader::MessageType::NAK) {
     return;
   }
 
@@ -296,14 +306,15 @@ void LumenProtocol::send_ack(uint8_t seq, const udp::endpoint &recipient) {
             << recipient << std::endl;
 }
 
-void LumenProtocol::send_sack(const udp::endpoint &recipient) {
-  // generate SACK packet using reliability manager
-  LumenPacket sack_packet = reliability_manager_->generate_sack_packet();
+void LumenProtocol::send_nak(uint8_t seq, const udp::endpoint &recipient) {
+  // generate NAK packet using reliability manager
+  LumenPacket nak_packet = reliability_manager_->generate_nak_packet(seq);
 
-  // send the SACK packet
-  send_packet(sack_packet, recipient);
+  // send the NAK packet
+  send_packet(nak_packet, recipient);
 
-  std::cout << "[LUMEN] Sent SACK to " << recipient << std::endl;
+  std::cout << "[LUMEN] Sent NAK for seq: " << static_cast<int>(seq) << " to "
+            << recipient << std::endl;
 }
 
 uint32_t LumenProtocol::generate_timestamp() const {

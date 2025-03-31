@@ -23,11 +23,11 @@ class LumenProtocol {
 public:
   // constructor for base station
   LumenProtocol(boost::asio::io_context &io_context, UdpServer &server,
-                bool send_acks = true, bool use_sack = false);
+                bool send_acks = true, bool use_nak = false);
 
   // constructor for rover
   LumenProtocol(boost::asio::io_context &io_context, UdpClient &client,
-                bool send_acks = false, bool use_sack = true);
+                bool send_acks = false, bool use_nak = true);
 
   // destructor
   ~LumenProtocol();
@@ -60,9 +60,9 @@ private:
   // send a raw packet
   void send_packet(const LumenPacket &packet, const udp::endpoint &recipient);
 
-  // handle acks and sacks
+  // handle acks and naks
   void send_ack(uint8_t seq, const udp::endpoint &recipient);
-  void send_sack(const udp::endpoint &recipient);
+  void send_nak(uint8_t seq, const udp::endpoint &recipient);
 
   // generate a timestamp for lumen header
   uint32_t generate_timestamp() const;
@@ -94,7 +94,7 @@ private:
   std::mutex callback_mutex_;
 
   bool send_acks_;
-  bool use_sack_;
+  bool use_nak_;
 
   bool running_;
 

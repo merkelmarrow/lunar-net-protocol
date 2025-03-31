@@ -91,126 +91,44 @@ void ReliabilityManager::process_ack(uint8_t seq) {
   }
 }
 
-// process SACKs
-void ReliabilityManager::process_sack(
-    const std::vector<uint8_t> &missing_seqs) {
-  if (!running_ || missing_seqs.empty()) {
+// process a NAK
+void ReliabilityManager::process_nak(uint8_t seq) {
+  if (!running_) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(sent_packets_mutex_);
 
-  std::cout << "[RELIABILITY] Received SACK with " << missing_seqs.size()
-            << " missing sequences." << std::endl;
-
-  // the first sequence in the SACK is the next expected sequence
-  uint8_t next_expected = missing_seqs[0];
-
-  // create a set of missing sequences for faster lookup
-  std::set<uint8_t> missing_set(missing_seqs.begin(), missing_seqs.end());
-
-  // find the highest missing sequence to determine window size
-  uint8_t highest_missing = next_expected;
-  for (uint8_t missing_seq : missing_seqs) {
-    bool is_higher = false;
-    if (missing_seq > highest_missing && missing_seq - highest_missing < 128) {
-      is_higher = true;
-    } else if (missing_seq < highest_missing &&
-               highest_missing - missing_seq > 128) {
-      is_higher = true;
+  // find the requested packet in our sent packets
+  auto it = sent_packets_.find(seq);
+  if (it != sent_packets_.end()) {
+    // get a copy of retransmit callback for thread safety
+    std::function<void(const LumenPacket &, const udp::endpoint &)>
+        callback_copy;
+    {
+      std::lock_guard<std::mutex> callback_lock(callback_mutex_);
+      callback_copy = retransmit_callback_;
     }
 
-    if (is_higher) {
-      highest_missing = missing_seq;
+    if (callback_copy) {
+      // reset retransmission timer to avoid immediate retries
+      it->second.sent_time = std::chrono::steady_clock::now();
+
+      // retransmit the packet
+      callback_copy(it->second.packet, it->second.recipient);
+      std::cout << "[RELIABILITY] Retransmitting packet with seq: "
+                << static_cast<int>(seq) << " (NAK)" << std::endl;
     }
+  } else {
+    std::cout << "[RELIABILITY] Received NAK for unknown sequence: "
+              << static_cast<int>(seq) << std::endl;
   }
+}
 
-  // process our sent packets
-  auto it = sent_packets_.begin();
-  while (it != sent_packets_.end()) {
-    uint8_t seq = it->first;
-
-    // Case 1: Is this sequence already acknowledged?
-    // (i.e., is it before the next expected sequence?)
-    bool is_acknowledged = false;
-
-    if (seq == next_expected - 1) {
-      // special case: this is the sequence right before next_expected
-      is_acknowledged = true;
-    } else if (next_expected > seq) {
-      // normal case: next_expected is higher than seq
-      // if the difference is small, this packet is acknowledged
-      if (next_expected - seq < 128) {
-        is_acknowledged = true;
-      }
-    } else if (next_expected < seq) {
-      // wrap-around case: next_expected wrapped back to 0
-      // if seq is close to 255, it's acknowledged
-      if (seq - next_expected > 128) {
-        is_acknowledged = true;
-      }
-    }
-
-    if (is_acknowledged) {
-      std::cout << "[RELIABILITY] SACK implicitly acknowledged seq: "
-                << static_cast<int>(seq) << " (already acknowledged)"
-                << std::endl;
-      it = sent_packets_.erase(it);
-      continue;
-    }
-
-    // case 2: Is this sequence explicitly missing?
-    if (missing_set.find(seq) != missing_set.end()) {
-      // keep it for retransmission
-      ++it;
-      continue;
-    }
-
-    // case 3: Is this sequence within the SACK window but not missing?
-
-    // check if seq is within the window
-    bool is_in_window = false;
-    if (next_expected <= highest_missing) {
-      // no wrap-around in window
-      is_in_window = (seq >= next_expected && seq <= highest_missing);
-    } else {
-      // window wraps around
-      is_in_window = (seq >= next_expected || seq <= highest_missing);
-    }
-
-    if (is_in_window) {
-      std::cout << "[RELIABILITY] SACK explicitly acknowledged seq: "
-                << static_cast<int>(seq) << " (not in missing set)"
-                << std::endl;
-      it = sent_packets_.erase(it);
-    } else {
-      ++it;
-    }
-  }
-
-  // retransmit missing sequences
-  for (uint8_t seq : missing_seqs) {
-    auto it = sent_packets_.find(seq);
-    if (it != sent_packets_.end()) {
-      // get a copy of retransmit callback for thread safety
-      std::function<void(const LumenPacket &, const udp::endpoint &)>
-          callback_copy;
-      {
-        std::lock_guard<std::mutex> callback_lock(callback_mutex_);
-        callback_copy = retransmit_callback_;
-      }
-
-      if (callback_copy) {
-        // reset retransmission timer to avoid immediate retries
-        it->second.sent_time = std::chrono::steady_clock::now();
-
-        // retransmit
-        callback_copy(it->second.packet, it->second.recipient);
-        std::cout << "[RELIABILITY] Retransmitting packet with seq: "
-                  << static_cast<int>(seq) << " (SACK)" << std::endl;
-      }
-    }
-  }
+// get the next expected sequence number
+uint8_t ReliabilityManager::get_next_expected_sequence() const {
+  std::lock_guard<std::mutex> lock(received_sequences_mutex_);
+  return next_expected_sequence_;
 }
 
 void ReliabilityManager::record_received_sequence(uint8_t seq) {
@@ -264,57 +182,17 @@ void ReliabilityManager::record_received_sequence(uint8_t seq) {
   }
 }
 
-LumenPacket ReliabilityManager::generate_sack_packet() {
-  std::lock_guard<std::mutex> lock(received_sequences_mutex_);
+LumenPacket ReliabilityManager::generate_nak_packet(uint8_t seq) {
+  // Create a NAK payload with the sequence number
+  std::vector<uint8_t> nak_payload = {seq};
 
-  uint8_t next_seq = next_expected_sequence_;
-  std::vector<uint8_t> missing_seqs;
+  // Create a NAK header
+  LumenHeader header(LumenHeader::MessageType::NAK, LumenHeader::Priority::HIGH,
+                     0, // Use sequence 0 for NAK packets
+                     0, // Use timestamp 0 for NAK packets
+                     static_cast<uint16_t>(nak_payload.size()));
 
-  // add next expected sequence
-  missing_seqs.push_back(next_seq);
-
-  // find the highest sequence we've actually received
-  uint8_t highest_received = next_seq;
-  for (uint8_t seq : received_sequences_) {
-    // handle wrap-around when determining highest
-    bool is_higher = false;
-    if (seq > highest_received && seq - highest_received < 128) {
-      is_higher = true;
-    } else if (seq < highest_received && highest_received - seq > 128) {
-      is_higher = true;
-    }
-
-    if (is_higher) {
-      highest_received = seq;
-    }
-  }
-
-  // calculate how many sequences to look for gaps
-  uint8_t range;
-  if (highest_received >= next_seq) {
-    range = highest_received - next_seq;
-  } else {
-    range = (highest_received + 256) - next_seq;
-  }
-
-  // cap the range to avoid excessive SACK sizes
-  range = std::min(range, (uint8_t)16);
-
-  // look for actual gaps in the received sequences
-  for (uint8_t i = 1; i <= range; i++) {
-    uint8_t seq = (next_seq + i) & 0xFF;
-    if (received_sequences_.find(seq) == received_sequences_.end()) {
-      missing_seqs.push_back(seq);
-    }
-  }
-
-  // create a SACK header
-  LumenHeader header(LumenHeader::MessageType::SACK,
-                     LumenHeader::Priority::HIGH, next_seq,
-                     0, // Use timestamp 0 for SACK packets
-                     static_cast<uint16_t>(missing_seqs.size()));
-
-  return LumenPacket(header, missing_seqs);
+  return LumenPacket(header, nak_payload);
 }
 
 // get messages that need retransmission

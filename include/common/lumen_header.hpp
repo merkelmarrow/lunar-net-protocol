@@ -17,7 +17,7 @@ public:
     DATA = 2,
     VIDEO = 3,
     STATUS = 4,
-    SACK = 5
+    NAK = 5
   };
 
   enum class Priority : uint8_t {
