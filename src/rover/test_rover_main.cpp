@@ -9,18 +9,21 @@
 int main() {
   try {
     boost::asio::io_context io_context;
-    // For testing, use localhost as the base station IP.
-    std::string base_ip = "127.0.0.1";
-    int base_port = 9000; // base station listening port
+    // Base station details: IP 10.237.0.201 and port 9000.
+    std::string base_ip = "10.237.0.201";
+    int base_port = 9000;
     std::string rover_id = "grp18-rover";
 
-    // Create and start the Rover instance.
+    // Create the Rover instance.
     Rover rover(io_context, base_ip, base_port, rover_id);
+
     rover.start();
-    std::cout << "[MAIN] Rover started. Connecting to Base Station at "
+    std::cout << "[MAIN] Rover started on IP 10.237.0.47, connecting to Base "
+                 "Station at "
               << base_ip << ":" << base_port << std::endl;
 
-    // Use a timer to schedule additional message sending after handshake.
+    // Use a timer to schedule additional message sending after the handshake
+    // completes.
     boost::asio::steady_timer timer(io_context, std::chrono::seconds(5));
     timer.async_wait([&](const boost::system::error_code &ec) {
       if (!ec) {
@@ -36,9 +39,9 @@ int main() {
         std::cout << "[TEST] Status message sent." << std::endl;
 
         // --- Create and Send a Raw JSON Message ---
-        // Here we create a BasicMessage which produces a JSON string.
+        // Here we create a BasicMessage which serializes to JSON.
         BasicMessage rawMsg("Raw JSON message from rover", rover_id);
-        // Destination: base station endpoint (using base_ip and base_port).
+        // Create an endpoint for the base station.
         boost::asio::ip::udp::endpoint base_endpoint(
             boost::asio::ip::address::from_string(base_ip), base_port);
         rover.send_raw_message(rawMsg, base_endpoint);
@@ -46,12 +49,10 @@ int main() {
       }
     });
 
-    std::cout << "[MAIN] Extended Rover Test running. Waiting for events..."
-              << std::endl;
+    // Run the io_context event loop.
     io_context.run();
   } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception in extended rover test: " << e.what()
-              << std::endl;
+    std::cerr << "[ERROR] Exception in Rover: " << e.what() << std::endl;
   }
   return 0;
 }
