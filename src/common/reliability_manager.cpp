@@ -94,7 +94,7 @@ void ReliabilityManager::process_ack(uint8_t seq) {
 // process SACKs
 void ReliabilityManager::process_sack(
     const std::vector<uint8_t> &missing_seqs) {
-  if (!running_) {
+  if (!running_ || missing_seqs.empty()) {
     return;
   }
 
@@ -103,49 +103,96 @@ void ReliabilityManager::process_sack(
   std::cout << "[RELIABILITY] Received SACK with " << missing_seqs.size()
             << " missing sequences." << std::endl;
 
-  if (missing_seqs.empty()) {
-    return; // nothing to do if no missing sequences
-  }
+  // the first sequence in the SACK is the next expected sequence
+  uint8_t next_expected = missing_seqs[0];
 
   // create a set of missing sequences for faster lookup
   std::set<uint8_t> missing_set(missing_seqs.begin(), missing_seqs.end());
 
-  // determine the valid sequence window - first sequence in SACK is the next
-  // expected
-  uint8_t window_start = missing_seqs[0];
-  uint8_t window_size = SACK_WINDOW_SIZE;
+  // find the highest missing sequence to determine window size
+  uint8_t highest_missing = next_expected;
+  for (uint8_t missing_seq : missing_seqs) {
+    bool is_higher = false;
+    if (missing_seq > highest_missing && missing_seq - highest_missing < 128) {
+      is_higher = true;
+    } else if (missing_seq < highest_missing &&
+               highest_missing - missing_seq > 128) {
+      is_higher = true;
+    }
 
-  // acknowledge all packets in our tracking that are within window but not in
-  // missing list
+    if (is_higher) {
+      highest_missing = missing_seq;
+    }
+  }
+
+  // process our sent packets
   auto it = sent_packets_.begin();
   while (it != sent_packets_.end()) {
     uint8_t seq = it->first;
 
-    // check if this sequence is within the window (handle wrap-around)
-    bool in_window = false;
-    for (uint8_t i = 0; i < window_size; i++) {
-      if (seq == ((window_start + i) & 0xFF)) { // handle wrap-around with &0xFF
-        in_window = true;
-        break;
+    // Case 1: Is this sequence already acknowledged?
+    // (i.e., is it before the next expected sequence?)
+    bool is_acknowledged = false;
+
+    if (seq == next_expected - 1) {
+      // special case: this is the sequence right before next_expected
+      is_acknowledged = true;
+    } else if (next_expected > seq) {
+      // normal case: next_expected is higher than seq
+      // if the difference is small, this packet is acknowledged
+      if (next_expected - seq < 128) {
+        is_acknowledged = true;
+      }
+    } else if (next_expected < seq) {
+      // wrap-around case: next_expected wrapped back to 0
+      // if seq is close to 255, it's acknowledged
+      if (seq - next_expected > 128) {
+        is_acknowledged = true;
       }
     }
 
-    if (in_window && missing_set.find(seq) == missing_set.end()) {
-      // this packet is within window but not in missing list, so it was
-      // received
+    if (is_acknowledged) {
       std::cout << "[RELIABILITY] SACK implicitly acknowledged seq: "
-                << static_cast<int>(seq) << std::endl;
+                << static_cast<int>(seq) << " (already acknowledged)"
+                << std::endl;
+      it = sent_packets_.erase(it);
+      continue;
+    }
+
+    // case 2: Is this sequence explicitly missing?
+    if (missing_set.find(seq) != missing_set.end()) {
+      // keep it for retransmission
+      ++it;
+      continue;
+    }
+
+    // case 3: Is this sequence within the SACK window but not missing?
+
+    // check if seq is within the window
+    bool is_in_window = false;
+    if (next_expected <= highest_missing) {
+      // no wrap-around in window
+      is_in_window = (seq >= next_expected && seq <= highest_missing);
+    } else {
+      // window wraps around
+      is_in_window = (seq >= next_expected || seq <= highest_missing);
+    }
+
+    if (is_in_window) {
+      std::cout << "[RELIABILITY] SACK explicitly acknowledged seq: "
+                << static_cast<int>(seq) << " (not in missing set)"
+                << std::endl;
       it = sent_packets_.erase(it);
     } else {
       ++it;
     }
   }
 
-  // now handle retransmission for the missing sequences
+  // retransmit missing sequences
   for (uint8_t seq : missing_seqs) {
     auto it = sent_packets_.find(seq);
     if (it != sent_packets_.end()) {
-      // Get a copy of retransmit callback for thread safety
+      // get a copy of retransmit callback for thread safety
       std::function<void(const LumenPacket &, const udp::endpoint &)>
           callback_copy;
       {
@@ -154,10 +201,10 @@ void ReliabilityManager::process_sack(
       }
 
       if (callback_copy) {
-        // Update sent time
+        // reset retransmission timer to avoid immediate retries
         it->second.sent_time = std::chrono::steady_clock::now();
 
-        // Retransmit
+        // retransmit
         callback_copy(it->second.packet, it->second.recipient);
         std::cout << "[RELIABILITY] Retransmitting packet with seq: "
                   << static_cast<int>(seq) << " (SACK)" << std::endl;
@@ -173,17 +220,47 @@ void ReliabilityManager::record_received_sequence(uint8_t seq) {
 
   std::lock_guard<std::mutex> lock(received_sequences_mutex_);
 
-  // add to received sequences
+  // add to received sequences set
   received_sequences_.insert(seq);
 
-  // update the next expected sequence if this is the one we're waiting for
+  // check if this is the next expected sequence
   if (seq == next_expected_sequence_) {
-    // find the next gap
-    while (received_sequences_.find(next_expected_sequence_) !=
-           received_sequences_.end()) {
-      next_expected_sequence_ =
-          (next_expected_sequence_ + 1) & 0xFF; // wrapping
+    // find the next gap in sequence numbers
+    uint8_t temp = next_expected_sequence_;
+    do {
+      temp = (temp + 1) & 0xFF; // increment with wrap-around
+    } while (received_sequences_.find(temp) != received_sequences_.end());
+
+    next_expected_sequence_ = temp;
+
+    // clean up received_sequences_ by removing acknowledged sequences
+    auto it = received_sequences_.begin();
+    while (it != received_sequences_.end()) {
+      uint8_t received_seq = *it;
+
+      // check if this sequence is before next_expected_sequence_
+      bool is_before_next = false;
+      if (next_expected_sequence_ > received_seq) {
+        // no wrap-around
+        if (next_expected_sequence_ - received_seq < 128) {
+          is_before_next = true;
+        }
+      } else if (next_expected_sequence_ < received_seq) {
+        // wrap-around
+        if (received_seq - next_expected_sequence_ > 128) {
+          is_before_next = true;
+        }
+      }
+
+      if (is_before_next) {
+        it = received_sequences_.erase(it);
+      } else {
+        ++it;
+      }
     }
+
+    std::cout << "[RELIABILITY] Updated next expected sequence to: "
+              << static_cast<int>(next_expected_sequence_) << std::endl;
   }
 }
 
@@ -193,18 +270,45 @@ LumenPacket ReliabilityManager::generate_sack_packet() {
   uint8_t next_seq = next_expected_sequence_;
   std::vector<uint8_t> missing_seqs;
 
-  // add the next expected sequence as the first entry
+  // add next expected sequence
   missing_seqs.push_back(next_seq);
 
-  // look forward from next_expected_sequence_ over the window size
-  for (uint8_t i = 1; i < SACK_WINDOW_SIZE; i++) {
-    uint8_t seq = static_cast<uint8_t>(next_seq + i);
+  // find the highest sequence we've actually received
+  uint8_t highest_received = next_seq;
+  for (uint8_t seq : received_sequences_) {
+    // handle wrap-around when determining highest
+    bool is_higher = false;
+    if (seq > highest_received && seq - highest_received < 128) {
+      is_higher = true;
+    } else if (seq < highest_received && highest_received - seq > 128) {
+      is_higher = true;
+    }
+
+    if (is_higher) {
+      highest_received = seq;
+    }
+  }
+
+  // calculate how many sequences to look for gaps
+  uint8_t range;
+  if (highest_received >= next_seq) {
+    range = highest_received - next_seq;
+  } else {
+    range = (highest_received + 256) - next_seq;
+  }
+
+  // cap the range to avoid excessive SACK sizes
+  range = std::min(range, (uint8_t)16);
+
+  // look for actual gaps in the received sequences
+  for (uint8_t i = 1; i <= range; i++) {
+    uint8_t seq = (next_seq + i) & 0xFF;
     if (received_sequences_.find(seq) == received_sequences_.end()) {
       missing_seqs.push_back(seq);
     }
   }
 
-  // create a SACK header using next_seq
+  // create a SACK header
   LumenHeader header(LumenHeader::MessageType::SACK,
                      LumenHeader::Priority::HIGH, next_seq,
                      0, // Use timestamp 0 for SACK packets
