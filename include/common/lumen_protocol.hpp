@@ -4,8 +4,9 @@
 #include <boost/asio.hpp>
 #include <boost/asio/io_context.hpp>
 #include <cstdint>
-#include <map>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -15,15 +16,8 @@
 #include "lumen_header.hpp"
 #include "lumen_packet.hpp"
 #include "reliability_manager.hpp"
-#include <unordered_map>
 
 using boost::asio::ip::udp;
-
-// New per–sender incoming state structure.
-struct IncomingState {
-  uint8_t expected_seq;
-  std::map<uint8_t, LumenPacket> buffered_packets;
-};
 
 class LumenProtocol {
 public:
@@ -51,7 +45,7 @@ public:
                          const udp::endpoint &)>
           callback);
 
-  // Get current sequence number (outgoing)
+  // get current outgoing sequence number
   uint8_t get_current_sequence() const;
 
 private:
@@ -60,6 +54,7 @@ private:
   void handle_udp_data(const std::vector<uint8_t> &data,
                        const udp::endpoint &endpoint);
 
+  // process a complete packet extracted from the frame buffer.
   void process_complete_packet(const LumenPacket &packet,
                                const udp::endpoint &endpoint);
 
@@ -116,7 +111,7 @@ private:
   // Endpoint tracking for frame buffer
   udp::endpoint buffer_sender_endpoint_;
 
-  // New: per–sender incoming state for reordering.
-  std::unordered_map<std::string, IncomingState> incoming_states_;
-  std::mutex incoming_states_mutex_;
+  // for each sender, we record the last delivered (non-control) sequence.
+  std::unordered_map<std::string, uint8_t> last_delivered_;
+  std::mutex last_delivered_mutex_;
 };

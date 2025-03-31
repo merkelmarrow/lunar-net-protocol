@@ -206,11 +206,11 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
   uint8_t pkt_seq = header.get_sequence();
   LumenHeader::MessageType type = header.get_type();
 
-  // create a sender key (IP:port) to index incoming state.
+  // create a sender key (IP:port) to index ordering state.
   std::string sender_key =
       endpoint.address().to_string() + ":" + std::to_string(endpoint.port());
 
-  // 1. process control packets immediately
+  // process control packets immediately
   if (type == LumenHeader::MessageType::ACK) {
     if (!packet.get_payload().empty()) {
       uint8_t acked_seq = packet.get_payload()[0];
@@ -225,54 +225,33 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     return;
   }
 
-  // 2. get (or create) the incoming state for this sender
+  // ordering for non–control packets ---
   {
-    std::lock_guard<std::mutex> lock(incoming_states_mutex_);
-    if (incoming_states_.find(sender_key) == incoming_states_.end()) {
-      IncomingState state;
-      state.expected_seq = pkt_seq;
-      incoming_states_[sender_key] = state;
-    }
-  }
-
-  // 3. process non–control packets using per–sender state
-  {
-    std::unique_lock<std::mutex> lock(incoming_states_mutex_);
-    IncomingState &state = incoming_states_[sender_key];
-    uint8_t expected = state.expected_seq;
-
-    int diff = static_cast<int>(pkt_seq) - static_cast<int>(expected);
-    if (diff < 0)
-      diff += 256;
-
-    if (diff == 0) {
-      lock.unlock();
+    std::lock_guard<std::mutex> lock(last_delivered_mutex_);
+    auto it = last_delivered_.find(sender_key);
+    if (it == last_delivered_.end()) {
+      // first packet from this sender: deliver and record its sequence
+      last_delivered_[sender_key] = pkt_seq;
       deliver_packet(packet, endpoint);
-      lock.lock();
-      state.expected_seq = (state.expected_seq + 1) & 0xFF;
-      while (true) {
-        auto it = state.buffered_packets.find(state.expected_seq);
-        if (it == state.buffered_packets.end())
-          break;
-        LumenPacket next_packet = it->second;
-        state.buffered_packets.erase(it);
-        lock.unlock();
-        deliver_packet(next_packet, endpoint);
-        lock.lock();
-        state.expected_seq = (state.expected_seq + 1) & 0xFF;
-      }
-    } else if (diff < 128) { // packet is ahead of expected.
-      if (state.buffered_packets.find(pkt_seq) ==
-          state.buffered_packets.end()) {
-        state.buffered_packets.insert({pkt_seq, packet});
-        std::cout << "[LUMEN] Buffered out-of-order packet: got "
-                  << static_cast<int>(pkt_seq) << " but expected "
-                  << static_cast<int>(expected) << std::endl;
-        send_nak(expected, endpoint);
-      }
     } else {
-      std::cout << "[LUMEN] Dropping duplicate/old packet with seq: "
-                << static_cast<int>(pkt_seq) << std::endl;
+      uint8_t last = it->second;
+      uint8_t expected = (last + 1) & 0xFF;
+      int diff = static_cast<int>(pkt_seq) - static_cast<int>(expected);
+      if (diff < 0)
+        diff += 256;
+      if (pkt_seq == expected) {
+        deliver_packet(packet, endpoint);
+        it->second = pkt_seq;
+      } else if (diff > 0 && diff < 128) {
+        std::cout << "[LUMEN] Out-of-order packet: expected seq "
+                  << static_cast<int>(expected) << " but got "
+                  << static_cast<int>(pkt_seq) << std::endl;
+        send_nak(expected, endpoint);
+        // drop this packet.
+      } else {
+        std::cout << "[LUMEN] Dropping duplicate/old packet with seq: "
+                  << static_cast<int>(pkt_seq) << std::endl;
+      }
     }
   }
 }
