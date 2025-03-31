@@ -65,7 +65,11 @@ void MessageManager::send_message(const Message &message,
   protocol_.send_message(payload, lumen_type, priority, recipient);
 
   std::cout << "[MESSAGE MANAGER] Sent message type: " << message.get_type()
-            << " to " << recipient << std::endl;
+            << " to "
+            << (recipient.address().is_unspecified()
+                    ? (client_ ? client_->get_base_endpoint() : udp::endpoint())
+                    : recipient)
+            << std::endl;
 }
 
 void MessageManager::set_message_callback(
