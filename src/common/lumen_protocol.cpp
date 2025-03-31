@@ -264,7 +264,7 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     } else if (diff < 128) { // packet is ahead of expected.
       if (state.buffered_packets.find(pkt_seq) ==
           state.buffered_packets.end()) {
-        state.buffered_packets[pkt_seq] = packet;
+        state.buffered_packets.insert({pkt_seq, packet});
         std::cout << "[LUMEN] Buffered out-of-order packet: got "
                   << static_cast<int>(pkt_seq) << " but expected "
                   << static_cast<int>(expected) << std::endl;

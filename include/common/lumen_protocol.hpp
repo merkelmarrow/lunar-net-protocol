@@ -19,7 +19,7 @@
 
 using boost::asio::ip::udp;
 
-// per–sender incoming state structure.
+// New per–sender incoming state structure.
 struct IncomingState {
   uint8_t expected_seq;
   std::map<uint8_t, LumenPacket> buffered_packets;
@@ -51,7 +51,7 @@ public:
                          const udp::endpoint &)>
           callback);
 
-  // get current sequence number (outgoing)
+  // Get current sequence number (outgoing)
   uint8_t get_current_sequence() const;
 
 private:
@@ -113,10 +113,10 @@ private:
   void process_frame_buffer_for_sender(const std::string &sender_key,
                                        const udp::endpoint &endpoint);
 
-  // endpoint tracking for frame buffer
+  // Endpoint tracking for frame buffer
   udp::endpoint buffer_sender_endpoint_;
 
-  // per–sender incoming state for reordering.
+  // New: per–sender incoming state for reordering.
   std::unordered_map<std::string, IncomingState> incoming_states_;
   std::mutex incoming_states_mutex_;
 };
