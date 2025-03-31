@@ -21,8 +21,9 @@ public:
     ACTIVE
   };
 
-  BaseStation(boost::asio::io_context, int port,
-              const std::string &station_id = "grp18-base");
+  BaseStation(boost::asio::io_context &io_context, int port,
+              const std::string &station_id);
+  ~BaseStation();
 
   void start();
   void stop();
@@ -32,7 +33,7 @@ public:
   void set_status_callback(StatusCallback callback);
 
   SessionState get_session_state() const;
-  SessionState get_connected_rover_id() const;
+  std::string get_connected_rover_id() const;
 
 private:
   void handle_message(std::unique_ptr<Message> message,
@@ -52,7 +53,7 @@ private:
 
   // session state
   SessionState session_state_;
-  std::string connected_rover_id;
+  std::string connected_rover_id_;
   udp::endpoint rover_endpoint_;
 
   // base station id
