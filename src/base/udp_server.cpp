@@ -1,33 +1,45 @@
 // src/base/udp_server.cpp
 
 #include "udp_server.hpp"
+#include <boost/asio/buffer.hpp>
+#include <boost/system/error_code.hpp>
 #include <iostream>
+#include <vector> // For std::vector
 
 UdpServer::UdpServer(boost::asio::io_context &context, int port)
-    : socket_(context, udp::endpoint(udp::v4(), port)), running_(false) {}
+    : // Initialize the socket, binding it to the specified port on all
+      // available IPv4 interfaces.
+      socket_(context, udp::endpoint(udp::v4(), port)), running_(false) {
+  std::cout << "[SERVER] UDP Server socket created and bound to port " << port
+            << std::endl;
+}
 
 UdpServer::~UdpServer() { stop(); }
 
 void UdpServer::start() {
   if (running_)
     return;
-
-  std::cout << "[SERVER] UDP Server is running..." << std::endl;
   running_ = true;
+  std::cout << "[SERVER] Starting UDP Server listener..." << std::endl;
+  // Initiate the first asynchronous receive operation.
   receive_data();
 }
 
 void UdpServer::stop() {
-  running_ = false;
+  running_ = false; // Prevent new async operations from being started
 
+  // Close the socket to interrupt pending operations and release the port.
   if (socket_.is_open()) {
     boost::system::error_code ec;
-    socket_.close(ec);
+    socket_.close(ec); // Close the socket
     if (ec) {
       std::cerr << "[ERROR] Error closing server socket: " << ec.message()
                 << std::endl;
+    } else {
+      std::cout << "[SERVER] UDP Server socket closed." << std::endl;
     }
   }
+  std::cout << "[SERVER] UDP Server stopped." << std::endl;
 }
 
 void UdpServer::set_receive_callback(
@@ -39,67 +51,105 @@ void UdpServer::set_receive_callback(
 
 void UdpServer::send_data(const std::vector<uint8_t> &data,
                           const udp::endpoint &recipient) {
-  socket_.async_send_to(
-      boost::asio::buffer(data), recipient,
-      [this](boost::system::error_code ec, std::size_t /*length*/) {
-        if (ec) {
-          std::cerr << "[ERROR] Failed to send data: " << ec.message()
-                    << std::endl;
-        }
-      });
+  if (!running_) {
+    std::cerr << "[ERROR] UdpServer::send_data: Server not running."
+              << std::endl;
+    return;
+  }
+  if (recipient.address().is_unspecified() || recipient.port() == 0) {
+    std::cerr << "[ERROR] UdpServer::send_data: Invalid recipient endpoint."
+              << std::endl;
+    return;
+  }
+
+  // Initiate an asynchronous send operation.
+  socket_.async_send_to(boost::asio::buffer(data), recipient,
+                        // Completion handler lambda:
+                        [this, recipient](boost::system::error_code ec,
+                                          std::size_t bytes_sent /*length*/) {
+                          if (ec) {
+                            std::cerr
+                                << "[ERROR] UdpServer failed to send data to "
+                                << recipient << ": " << ec.message()
+                                << std::endl;
+                          } else {
+                          }
+                        });
 }
 
+// Initiates or continues the asynchronous receive loop.
 void UdpServer::receive_data() {
   if (!running_)
-    return;
+    return; // Don't start a new receive if stopped
 
-  // define the receive handler function type
-  using receive_handler_t =
-      std::function<void(const boost::system::error_code &, std::size_t)>;
+  // Start an asynchronous receive operation.
+  // Data will be placed into buffer_.
+  // The sender's endpoint will be stored in sender_endpoint_.
+  // The lambda is the completion handler.
+  socket_.async_receive_from(
+      boost::asio::buffer(buffer_), // Target buffer
+      sender_endpoint_,             // Will be populated with sender's endpoint
+      // Completion Handler:
+      [this](const boost::system::error_code &ec, std::size_t length) {
+        // Check if the operation was successful and if the server is still
+        // running.
+        if (!ec && running_) {
+          // Convert the received data from the internal buffer to a
+          // std::vector.
+          std::vector<uint8_t> received_data(buffer_.data(),
+                                             buffer_.data() + length);
 
-  // create a shared pointer to the handler so it can reference itself
-  auto handler = std::make_shared<receive_handler_t>();
+          // std::cout << "[SERVER] Received " << length << " bytes from " <<
+          // sender_endpoint_ << std::endl; // Reduced verbosity
 
-  // define the actual handler
-  *handler = [this, handler](const boost::system::error_code &ec,
-                             std::size_t length) {
-    if (!ec && running_) {
-      // convert the received data to a vector of uint8_t
-      std::vector<uint8_t> received_data(buffer_.data(),
-                                         buffer_.data() + length);
+          // Get thread-safe copies of the endpoint and callback.
+          // sender_endpoint_ is updated by async_receive_from before this
+          // handler runs.
+          udp::endpoint endpoint_copy = sender_endpoint_;
+          std::function<void(const std::vector<uint8_t> &,
+                             const udp::endpoint &)>
+              callback_copy;
+          {
+            std::lock_guard<std::mutex> callback_lock(callback_mutex_);
+            callback_copy = receive_callback_;
+          }
 
-      // create local copies to avoid data races
-      udp::endpoint endpoint_copy;
-      std::function<void(const std::vector<uint8_t> &, const udp::endpoint &)>
-          callback_copy;
+          // Invoke the application-level callback if it's set.
+          if (callback_copy) {
+            try {
+              callback_copy(received_data, endpoint_copy);
+            } catch (const std::exception &e) {
+              std::cerr << "[ERROR] UdpServer: Exception in receive callback: "
+                        << e.what() << std::endl;
+            }
+          } else {
+            std::cout << "[SERVER] Warning: Received data but no receive "
+                         "callback is set."
+                      << std::endl;
+          }
 
-      {
-        std::lock_guard<std::mutex> endpoint_lock(endpoint_mutex_);
-        endpoint_copy = sender_endpoint_;
-      }
+          // If still running, issue the next receive operation to continue
+          // listening.
+          if (running_) {
+            receive_data(); // Recursive call to keep listening
+          }
+        } else if (ec == boost::asio::error::operation_aborted) {
+          // Operation aborted is expected when stop() closes the socket.
+          std::cout
+              << "[SERVER] Receive operation aborted (likely due to stop)."
+              << std::endl;
+        } else if (running_) {
+          // An unexpected error occurred.
+          std::cerr << "[ERROR] UdpServer receive error: " << ec.message()
+                    << std::endl;
 
-      {
-        std::lock_guard<std::mutex> callback_lock(callback_mutex_);
-        callback_copy = receive_callback_;
-      }
-
-      if (callback_copy) {
-        callback_copy(received_data, endpoint_copy);
-      }
-    }
-
-    // post the next receive operation if still running
-    if (running_) {
-      socket_.async_receive_from(boost::asio::buffer(buffer_), sender_endpoint_,
-                                 *handler);
-    }
-  };
-
-  // start the initial receive operation
-  socket_.async_receive_from(boost::asio::buffer(buffer_), sender_endpoint_,
-                             *handler);
+          stop();
+        }
+        // If !running_, the handler simply returns, stopping the loop.
+      }); // End of completion handler lambda
 }
 
+// Provides access to the endpoint of the most recent sender.
 const udp::endpoint UdpServer::get_sender_endpoint() {
   std::lock_guard<std::mutex> lock(endpoint_mutex_);
   return sender_endpoint_;
