@@ -191,3 +191,18 @@ void MessageManager::send_raw_message(const Message &message,
     std::cerr << "[ERROR] No sender available for raw message" << std::endl;
   }
 }
+
+void MessageManager::process_raw_json_message(std::unique_ptr<Message> message,
+                                              const udp::endpoint &sender) {
+  // Call the callback directly
+  std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>
+      callback_copy;
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    callback_copy = message_callback_;
+  }
+
+  if (callback_copy) {
+    callback_copy(std::move(message), sender);
+  }
+}

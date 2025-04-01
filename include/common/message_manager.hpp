@@ -33,6 +33,9 @@ public:
 
   void send_raw_message(const Message &message, const udp::endpoint &recipient);
 
+  void process_raw_json_message(std::unique_ptr<Message> message,
+                                const udp::endpoint &sender);
+
 private:
   // handle binary data from lumen protocol layer
   void handle_lumen_message(const std::vector<uint8_t> &payload,

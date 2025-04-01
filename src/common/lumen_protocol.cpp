@@ -4,6 +4,7 @@
 #include "configs.hpp"
 #include "lumen_header.hpp"
 #include "lumen_packet.hpp"
+#include "message_manager.hpp"
 #include "reliability_manager.hpp"
 
 #include <chrono>
@@ -180,26 +181,46 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
       std::cout << "[LUMEN] Detected raw JSON message without protocol headers"
                 << std::endl;
 
-      // Convert binary data to string
+      // Convert binary data to string for logging
       std::string json_str(data.begin(), data.end());
 
-      // Create a special header for raw JSON
-      LumenHeader header(LumenHeader::MessageType::DATA,
-                         LumenHeader::Priority::MEDIUM,
-                         0, // Special sequence number 0 for raw messages
-                         generate_timestamp(), data.size());
-
-      // Deliver directly to application layer
-      std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
-                         const udp::endpoint &)>
-          callback_copy;
-      {
-        std::lock_guard<std::mutex> lock(callback_mutex_);
-        callback_copy = message_callback_;
+      // Pretty print if valid JSON
+      if (Message::is_valid_json(json_str)) {
+        try {
+          std::string pretty_json = Message::pretty_print(json_str);
+          std::cout << "[MESSAGE MANAGER] Received raw JSON message: \n"
+                    << pretty_json << std::endl;
+        } catch (...) {
+          // Fall back to simple output
+          std::cout << "[MESSAGE MANAGER] Raw JSON: "
+                    << (json_str.length() > 50 ? json_str.substr(0, 50) + "..."
+                                               : json_str)
+                    << std::endl;
+        }
       }
 
-      if (callback_copy) {
-        callback_copy(data, header, endpoint);
+      // Process the JSON message directly
+      try {
+        if (Message::is_valid_json(json_str)) {
+          auto message = Message::deserialise(json_str);
+
+          // Call the message callback directly, bypassing lumen protocol
+          MessageManager *msg_manager = nullptr;
+          if (mode_ == ProtocolMode::BASE_STATION && server_) {
+            // Get reference to message manager through server
+            // This requires adding a method to get the message manager from
+            // server
+          } else if (mode_ == ProtocolMode::ROVER && client_) {
+            // Get reference to message manager through client
+          }
+
+          if (msg_manager) {
+            msg_manager->process_raw_json_message(std::move(message), endpoint);
+          }
+        }
+      } catch (const std::exception &e) {
+        std::cerr << "[ERROR] Failed to process raw JSON: " << e.what()
+                  << std::endl;
       }
 
       return;
