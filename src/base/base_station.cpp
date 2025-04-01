@@ -279,50 +279,59 @@ void BaseStation::handle_internal_telemetry(TelemetryMessage *telemetry_msg,
 void BaseStation::handle_session_init(const std::string &rover_id,
                                       const udp::endpoint &sender) {
   std::cout << "[BASE INTERNAL] Received SESSION_INIT from rover: " << rover_id
-            << " at " << sender << std::endl;
+            << " at " << sender << std::endl; // [cite: 1]
+
+  bool send_accept = false; // Flag to indicate if we should send SESSION_ACCEPT
 
   {
-    std::lock_guard<std::mutex> lock(state_mutex_);
+    std::lock_guard<std::mutex> lock(state_mutex_); // [cite: 1]
 
     // If already in a session with a *different* rover, reject. Allow reconnect
     // from same rover.
     if (session_state_ != SessionState::INACTIVE &&
-        connected_rover_id_ != rover_id) {
+        connected_rover_id_ != rover_id) { // [cite: 1]
       std::cout << "[BASE INTERNAL] Rejecting new session from " << rover_id
                 << ", already connected to " << connected_rover_id_
-                << std::endl;
+                << std::endl; // [cite: 1]
       // Optionally send a REJECT command (requires defining it)
-      return;
+      return; // [cite: 1]
     }
 
     // If reconnecting from the same rover, reset state
-    if (connected_rover_id_ == rover_id && rover_endpoint_ != sender) {
+    if (connected_rover_id_ == rover_id &&
+        rover_endpoint_ != sender) { // [cite: 1]
       std::cout << "[BASE INTERNAL] Rover " << rover_id
-                << " reconnected from new endpoint " << sender << std::endl;
-    } else if (connected_rover_id_ == rover_id) {
+                << " reconnected from new endpoint " << sender
+                << std::endl;                     // [cite: 1]
+    } else if (connected_rover_id_ == rover_id) { // [cite: 1]
       std::cout << "[BASE INTERNAL] Rover " << rover_id
-                << " re-initiating session." << std::endl;
+                << " re-initiating session." << std::endl; // [cite: 1]
     }
 
     // Update state and store rover details
-    session_state_ = SessionState::HANDSHAKE_INIT;
-    connected_rover_id_ = rover_id;
-    rover_endpoint_ = sender; // Store the sender's endpoint
+    session_state_ = SessionState::HANDSHAKE_INIT; // [cite: 1]
+    connected_rover_id_ = rover_id;                // [cite: 1]
+    rover_endpoint_ = sender; // Store the sender's endpoint [cite: 1]
     std::cout << "[BASE INTERNAL] Rover endpoint set to: " << rover_endpoint_
-              << std::endl;
+              << std::endl; // [cite: 1]
+
+    // ** FIX: Update state to HANDSHAKE_ACCEPT *before* sending the command **
+    session_state_ = SessionState::HANDSHAKE_ACCEPT; // [cite: 1]
+    send_accept = true;                              // Set flag to send command
+
+  } // Mutex lock released here
+
+  // Send SESSION_ACCEPT back to the rover's endpoint if flagged
+  if (send_accept) {
+    // The state check inside send_command will now pass
+    send_command(
+        "SESSION_ACCEPT",
+        station_id_); // Send base station ID back maybe? Or just ack. [cite: 1]
+
+    // Log after attempting to send
+    std::cout << "[BASE INTERNAL] Sent SESSION_ACCEPT to rover: " << rover_id
+              << std::endl; // [cite: 1]
   }
-
-  // Send SESSION_ACCEPT back to the rover's endpoint
-  send_command("SESSION_ACCEPT",
-               station_id_); // Send base station ID back maybe? Or just ack.
-
-  {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    session_state_ = SessionState::HANDSHAKE_ACCEPT;
-  }
-
-  std::cout << "[BASE INTERNAL] Sent SESSION_ACCEPT to rover: " << rover_id
-            << std::endl;
 }
 
 void BaseStation::handle_session_confirm(const std::string &rover_id,
