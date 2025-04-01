@@ -78,7 +78,3 @@ constexpr size_t MAX_FRAME_BUFFER_SIZE =
 constexpr std::chrono::milliseconds CLIENT_RETRY_DELAY{
     4000}; ///< Delay before UdpClient attempts to restart receive operations
            ///< after an error.
-
-// --- Deprecated/Unused? ---
-// constexpr size_t SACK_WINDOW_SIZE = 32; // Appears unused. Possibly related
-// to an alternative reliability mechanism (Selective ACK)?

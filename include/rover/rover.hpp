@@ -1,25 +1,26 @@
 // include/rover/rover.hpp
 #pragma once
 
-// Forward declarations for types used in unique_ptr members
+// Forward declarations
 class UdpClient;
 class LumenProtocol;
 class MessageManager;
 class Message;
 class CommandMessage;
 class StatusMessage;
-class TelemetryMessage; // Included for update_status parameter type
+// class TelemetryMessage; // Included via status_message.hpp now
 
-#include "status_message.hpp" // Need full definition for StatusLevel enum and update_status param
+#include "status_message.hpp" // Includes TelemetryMessage transitively? Check includes if needed.
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <chrono>     // For timer durations
-#include <functional> // For std::function
-#include <map>        // For telemetry data map
-#include <memory>     // For std::unique_ptr
-#include <mutex>      // For std::mutex
-#include <string>     // For std::string
+#include <chrono>
+#include <functional>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <set> // Added
+#include <string>
 
 using boost::asio::ip::udp;
 
@@ -27,11 +28,10 @@ using boost::asio::ip::udp;
  * @class Rover
  * @brief Represents the main application logic for the Rover node.
  *
- * Orchestrates the communication layers (UDP Client, Lumen Protocol, Message
- * Manager) for the rover. It handles session management (handshake with the
- * Base Station), manages rover status, sends telemetry and status updates
- * periodically, and routes incoming messages (typically commands) to an
- * application-level handler.
+ * Orchestrates communication layers, handles session management with Base
+ * Station, manages rover status, sends telemetry/status updates, supports
+ * scanning for other rovers, and routes incoming messages to application
+ * handlers.
  */
 class Rover {
 public:
@@ -50,15 +50,25 @@ public:
   /**
    * @typedef ApplicationMessageHandler
    * @brief Callback function type for handling general application messages
-   * received from the Base Station. Parameters: unique_ptr<Message> (received
-   * message), const udp::endpoint& (sender - should be base).
+   * received from the Base Station or other Rovers.
+   * Parameters: unique_ptr<Message> (received message), const udp::endpoint&
+   * (sender).
    */
   using ApplicationMessageHandler =
       std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>;
 
   /**
-   * @brief Constructor. Initializes communication layers and sets target Base
-   * Station details.
+   * @typedef DiscoveryMessageHandler
+   * @brief Callback function type for handling discovery responses when a new
+   * rover is found. Parameters: const std::string& (rover_id), const
+   * udp::endpoint& (endpoint).
+   */
+  using DiscoveryMessageHandler = std::function<void(
+      const std::string &rover_id, const udp::endpoint &endpoint)>;
+
+  /**
+   * @brief Constructor.
+   * Initializes communication layers and sets target Base Station details.
    * @param io_context The Boost.Asio io_context for all asynchronous
    * operations.
    * @param base_host The hostname or IP address of the Base Station.
@@ -81,28 +91,34 @@ public:
 
   /**
    * @brief Starts the Rover, including all communication layers and initiates
-   * the handshake process.
+   * the handshake process with the base station.
    */
   void start();
 
   /**
    * @brief Stops the Rover, cancelling timers and shutting down communication
-   * layers. Resets session state to INACTIVE.
+   * layers. Resets session state and clears discovered rovers.
    */
   void stop();
 
   /**
    * @brief Registers a callback function to handle general application messages
-   * (e.g., commands from Base). This handler receives messages that are not
-   * handled internally (like session management).
+   * (e.g., commands from Base or other Rovers).
    * @param handler The function object to call with the deserialized message
    * and sender endpoint.
    */
   void set_application_message_handler(ApplicationMessageHandler handler);
 
   /**
+   * @brief Registers a callback function to be notified when a new rover
+   * responds to a discovery scan.
+   * @param handler Function taking (rover_id, rover_endpoint).
+   */
+  void set_discovery_message_handler(DiscoveryMessageHandler handler);
+
+  /**
    * @brief Sends a TelemetryMessage containing the provided readings to the
-   * Base Station. Requires the session to be ACTIVE.
+   * Base Station (if session is ACTIVE).
    * @param readings A map containing telemetry key-value pairs (string ->
    * double).
    */
@@ -125,26 +141,50 @@ public:
   SessionState get_session_state() const;
 
   /**
-   * @brief Sends a standard application message via the full protocol stack to
-   * the Base Station. Requires the session to be ACTIVE.
+   * @brief Sends a standard application message via the full protocol stack.
+   * If recipient is unspecified and session is ACTIVE, sends to Base Station.
+   * Otherwise, sends to the specified recipient endpoint.
    * @param message The Message object to send.
+   * @param recipient Optional target endpoint (e.g., base station or a
+   * discovered rover).
    */
-  void send_message(const Message &message);
+  void send_message(const Message &message,
+                    const udp::endpoint &recipient = udp::endpoint());
 
   /**
    * @brief Sends a message directly via UDP, bypassing LumenProtocol (sends raw
    * JSON). Requires the MessageManager to have been configured with a UdpClient
    * pointer.
    * @param message The Message object to serialize and send as raw JSON.
-   * @param recipient The target UDP endpoint (usually the base station
-   * endpoint).
+   * @param recipient The target UDP endpoint (e.g., base station or a
+   * discovered rover).
    */
   void send_raw_message(const Message &message, const udp::endpoint &recipient);
 
   /**
+   * @brief Initiates a scan for other rovers on the local network.
+   * Sends a broadcast discovery message. Responses update the internal map and
+   * trigger callback.
+   * @param discovery_port The port number rovers listen on for discovery
+   * messages.
+   * @param message Optional custom discovery message content (defaults to basic
+   * probe command).
+   */
+  void scan_for_rovers(int discovery_port,
+                       const std::string &message = "ROVER_DISCOVER_PROBE");
+
+  /**
+   * @brief Gets a copy of the currently known discovered rovers. Thread-safe.
+   * @return std::map<std::string, udp::endpoint> Map of rover IDs to their
+   * endpoints.
+   */
+  std::map<std::string, udp::endpoint> get_discovered_rovers() const;
+
+  /**
    * @brief Gets the resolved endpoint of the registered Base Station.
    * @return const udp::endpoint& A reference to the stored base endpoint.
-   * @throws std::runtime_error if the internal UdpClient is not initialized.
+   * @throws std::runtime_error if the internal UdpClient is not initialized or
+   * registration failed.
    */
   const udp::endpoint &get_base_endpoint() const;
 
@@ -166,97 +206,75 @@ public:
 
 private:
   /**
-   * @brief Central routing function called by MessageManager when a message is
-   * received. Determines if the message should be handled internally (session
-   * management) or passed to the general application handler.
+   * @brief Central routing function called when a message is received.
+   * Determines if the message should be handled internally (session, discovery)
+   * or passed to the general application handler. Differentiates sender.
    * @param message unique_ptr to the deserialized Message object.
-   * @param sender The UDP endpoint of the message sender (should be the base
-   * station).
+   * @param sender The UDP endpoint of the message sender.
    */
   void route_message(std::unique_ptr<Message> message,
                      const udp::endpoint &sender);
 
   /**
    * @brief Internal handler for specific command messages received from the
-   * Base Station. Currently handles SESSION_ACCEPT and SESSION_ESTABLISHED.
+   * Base Station (SESSION_ACCEPT, SESSION_ESTABLISHED).
    * @param cmd_msg Pointer to the received CommandMessage.
-   * @param sender The sender's endpoint.
+   * @param sender The sender's endpoint (must be base station).
    */
   void handle_internal_command(CommandMessage *cmd_msg,
                                const udp::endpoint &sender);
 
+  /**
+   * @brief Internal handler for discovery-related commands (e.g.,
+   * ROVER_ANNOUNCE response, ROVER_DISCOVER probe). Updates discovered_rovers_
+   * map and triggers callback/response.
+   * @param cmd_msg Pointer to the received CommandMessage.
+   * @param sender The sender's endpoint.
+   */
+  void handle_discovery_command(CommandMessage *cmd_msg,
+                                const udp::endpoint &sender);
+
   // --- Session Management Methods ---
-
-  /**
-   * @brief Initiates the session handshake by sending SESSION_INIT and starting
-   * the retry timer.
-   */
   void initiate_handshake();
-
-  /**
-   * @brief Handles the SESSION_ACCEPT command received from the Base Station.
-   * Transitions state to HANDSHAKE_ACCEPT and sends SESSION_CONFIRM.
-   */
   void handle_session_accept();
-
-  /**
-   * @brief Handles the SESSION_ESTABLISHED command received from the Base
-   * Station. Transitions state to ACTIVE, cancels the handshake timer, and
-   * starts the status timer.
-   */
   void handle_session_established();
 
-  /**
-   * @brief Handler for the handshake retry timer. Resends INIT or CONFIRM if
-   * needed.
-   */
+  // --- Timer Handlers ---
   void handle_handshake_timer();
-
-  /**
-   * @brief Handler for the periodic status timer. Sends the current status and
-   * reschedules itself.
-   */
   void handle_status_timer();
 
   // --- Core Components ---
-  boost::asio::io_context
-      &io_context_; ///< Reference to the ASIO execution context.
-  std::unique_ptr<UdpClient> client_;       ///< UDP transport layer client.
-  std::unique_ptr<LumenProtocol> protocol_; ///< LUMEN protocol handler.
-  std::unique_ptr<MessageManager>
-      message_manager_; ///< Message serialization/deserialization manager.
+  boost::asio::io_context &io_context_;
+  std::unique_ptr<UdpClient> client_;
+  std::unique_ptr<LumenProtocol> protocol_;
+  std::unique_ptr<MessageManager> message_manager_;
 
   // --- Timers ---
-  boost::asio::steady_timer
-      status_timer_; ///< Timer for sending periodic status updates.
-  boost::asio::steady_timer
-      handshake_timer_; ///< Timer for handling handshake timeouts and retries.
+  boost::asio::steady_timer status_timer_;
+  boost::asio::steady_timer handshake_timer_;
 
   // --- Callbacks ---
-  ApplicationMessageHandler application_message_handler_ =
-      nullptr; ///< User-provided handler for app messages.
+  ApplicationMessageHandler application_message_handler_ = nullptr;
+  DiscoveryMessageHandler discovery_message_handler_ = nullptr; // NEW
 
   // --- State Variables ---
-  SessionState
-      session_state_; ///< Current state of the session with the base station.
-  std::string rover_id_; ///< Unique ID of this Rover.
-  StatusMessage::StatusLevel
-      current_status_level_; ///< Current reported status level.
-  std::string
-      current_status_description_; ///< Current reported status description.
-  int handshake_retry_count_;      ///< Counter for handshake retry attempts.
+  SessionState session_state_;
+  std::string rover_id_;
+  StatusMessage::StatusLevel current_status_level_;
+  std::string current_status_description_;
+  int handshake_retry_count_;
+  std::map<std::string, udp::endpoint> discovered_rovers_; // NEW
 
   // --- Thread Safety ---
-  mutable std::mutex state_mutex_; ///< Protects session_state_.
-  std::mutex status_mutex_;        ///< Protects current_status_level_ and
-                                   ///< current_status_description_.
-  std::mutex handler_mutex_;       ///< Protects application_message_handler_.
+  mutable std::mutex state_mutex_;
+  std::mutex status_mutex_;
+  std::mutex handler_mutex_;
+  mutable std::mutex discovery_mutex_; // NEW - protects discovered_rovers_
+  std::mutex
+      discovery_handler_mutex_; // NEW - protects discovery_message_handler_
 
   // --- Constants ---
-  static constexpr int MAX_HANDSHAKE_RETRIES =
-      5; ///< Maximum number of handshake retry attempts.
-  static constexpr std::chrono::seconds STATUS_INTERVAL{
-      10}; ///< Interval for sending periodic status messages.
-  static constexpr std::chrono::seconds HANDSHAKE_TIMEOUT{
-      5}; ///< Timeout duration for handshake steps.
+  static constexpr int MAX_HANDSHAKE_RETRIES = 5;
+  static constexpr std::chrono::seconds STATUS_INTERVAL{10};
+  static constexpr std::chrono::seconds HANDSHAKE_TIMEOUT{5};
 };
