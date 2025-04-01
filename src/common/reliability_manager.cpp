@@ -242,12 +242,22 @@ ReliabilityManager::get_packets_to_retransmit() {
 
   for (auto it = sent_packets_.begin(); it != sent_packets_.end();) {
     auto &info = it->second;
+    uint8_t seq = it->first;
 
-    // Calculate time since transmission
+    // Skip packets we've already ACKed (for base station)
+    if (role_ == Role::BASE_STATION &&
+        has_acked_sequence(seq, info.recipient)) {
+      std::cout << "[RELIABILITY] Removing packet with seq: "
+                << static_cast<int>(seq) << " that we've already ACKed"
+                << std::endl;
+      it = sent_packets_.erase(it);
+      continue;
+    }
+
+    // Rest of the function remains the same
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         now - info.sent_time);
 
-    // Calculate timeout with exponential backoff
     auto timeout = RELIABILITY_BASE_TIMEOUT * (1 << info.retry_count);
 
     if (elapsed > timeout) {
@@ -258,10 +268,8 @@ ReliabilityManager::get_packets_to_retransmit() {
         continue;
       }
 
-      // Add to retransmission list
       packets_to_retransmit.push_back({info.packet, info.recipient});
 
-      // Update sent time and retry count
       info.sent_time = now;
       info.retry_count++;
 
@@ -366,4 +374,31 @@ void ReliabilityManager::handle_cleanup_timer() {
       }
     });
   }
+}
+
+// Record that we've ACKed a sequence
+void ReliabilityManager::record_acked_sequence(uint8_t seq,
+                                               const udp::endpoint &endpoint) {
+  if (role_ != Role::BASE_STATION)
+    return;
+
+  std::string endpoint_key = get_endpoint_key(endpoint);
+  std::lock_guard<std::mutex> lock(acked_sequences_mutex_);
+  acked_sequences_[endpoint_key].insert(seq);
+}
+
+// Check if we've already ACKed a sequence
+bool ReliabilityManager::has_acked_sequence(uint8_t seq,
+                                            const udp::endpoint &endpoint) {
+  if (role_ != Role::BASE_STATION)
+    return false;
+
+  std::string endpoint_key = get_endpoint_key(endpoint);
+  std::lock_guard<std::mutex> lock(acked_sequences_mutex_);
+
+  auto it = acked_sequences_.find(endpoint_key);
+  if (it == acked_sequences_.end())
+    return false;
+
+  return it->second.find(seq) != it->second.end();
 }

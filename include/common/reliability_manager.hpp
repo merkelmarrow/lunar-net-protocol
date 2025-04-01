@@ -55,6 +55,12 @@ public:
   void set_retransmit_callback(
       std::function<void(const LumenPacket &, const udp::endpoint &)> callback);
 
+  // method to check if we've already ACKed a sequence
+  bool has_acked_sequence(uint8_t seq, const udp::endpoint &endpoint);
+
+  // method to record that we've ACKed a sequence
+  void record_acked_sequence(uint8_t seq, const udp::endpoint &endpoint);
+
 private:
   struct SentPacketInfo {
     LumenPacket packet;
@@ -74,6 +80,9 @@ private:
 
   // Map of sequence numbers to packet info
   std::map<uint8_t, SentPacketInfo> sent_packets_;
+
+  std::unordered_map<std::string, std::set<uint8_t>> acked_sequences_;
+  std::mutex acked_sequences_mutex_;
 
   // Track received sequences by endpoint
   std::unordered_map<std::string,

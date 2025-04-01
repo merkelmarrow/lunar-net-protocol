@@ -355,17 +355,19 @@ void LumenProtocol::send_packet(const LumenPacket &packet,
   }
 }
 
-// Send an ACK packet (Base station only)
 void LumenProtocol::send_ack(uint8_t seq, const udp::endpoint &recipient) {
   if (mode_ != ProtocolMode::BASE_STATION) {
     std::cerr << "[ERROR] ROVER should not send ACKs" << std::endl;
     return;
   }
 
+  // Record this ACK to prevent retransmitting the packet later
+  reliability_manager_->record_acked_sequence(seq, recipient);
+
   // Create ACK payload with sequence number
   std::vector<uint8_t> ack_payload = {seq};
 
-  // Create ACK header
+  // Create ACK header with next sequence number
   uint32_t timestamp = generate_timestamp();
   uint8_t ack_seq = current_sequence_++;
 
@@ -377,7 +379,8 @@ void LumenProtocol::send_ack(uint8_t seq, const udp::endpoint &recipient) {
   LumenPacket ack_packet(ack_header, ack_payload);
   send_packet(ack_packet, recipient);
 
-  std::cout << "[LUMEN] Sent ACK for seq: " << static_cast<int>(seq) << " to "
+  std::cout << "[LUMEN] Sent ACK for seq: " << static_cast<int>(seq)
+            << " in packet with seq: " << static_cast<int>(ack_seq) << " to "
             << recipient << std::endl;
 }
 
