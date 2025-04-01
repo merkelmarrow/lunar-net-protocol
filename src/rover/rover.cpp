@@ -42,10 +42,10 @@ void Rover::start() {
   // start the message manager
   message_manager_->start();
 
-  // set up message callback
+  // Set up message callback to route messages
   message_manager_->set_message_callback(
       [this](std::unique_ptr<Message> message, const udp::endpoint &sender) {
-        handle_message(std::move(message), sender);
+        route_message(std::move(message), sender); // Use the router function
       });
 
   // initiate handshake
@@ -79,6 +79,13 @@ void Rover::stop() {
   std::cout << "[ROVER] Stopped" << std::endl;
 }
 
+// New method to set the application-level message handler
+void Rover::set_application_message_handler(ApplicationMessageHandler handler) {
+  std::lock_guard<std::mutex> lock(handler_mutex_);
+  application_message_handler_ = std::move(handler);
+  std::cout << "[ROVER] Application message handler set." << std::endl;
+}
+
 void Rover::send_telemetry(const std::map<std::string, double> &readings) {
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
@@ -93,8 +100,9 @@ void Rover::send_telemetry(const std::map<std::string, double> &readings) {
   TelemetryMessage telemetry_msg(readings, rover_id_);
   message_manager_->send_message(telemetry_msg);
 
-  std::cout << "[ROVER] Sent telemetry data with " << readings.size()
-            << " readings" << std::endl;
+  // Removed logging from here, can be added in main if needed
+  // std::cout << "[ROVER] Sent telemetry data with " << readings.size()
+  //           << " readings" << std::endl;
 }
 
 void Rover::update_status(StatusMessage::StatusLevel level,
@@ -103,8 +111,8 @@ void Rover::update_status(StatusMessage::StatusLevel level,
   current_status_level_ = level;
   current_status_description_ = description;
 
-  std::cout << "[ROVER] Updated status to: " << static_cast<int>(level) << " - "
-            << description << std::endl;
+  std::cout << "[ROVER] Internal status updated to: " << static_cast<int>(level)
+            << " - " << description << std::endl;
 }
 
 Rover::SessionState Rover::get_session_state() const {
@@ -112,41 +120,70 @@ Rover::SessionState Rover::get_session_state() const {
   return session_state_;
 }
 
-void Rover::handle_message(std::unique_ptr<Message> message,
-                           const udp::endpoint &sender) {
+// Renamed/Refactored: Routes message to internal handler or application handler
+void Rover::route_message(std::unique_ptr<Message> message,
+                          const udp::endpoint &sender) {
+  if (!message)
+    return;
+
   std::string msg_type = message->get_type();
   std::string sender_id = message->get_sender();
 
-  std::cout << "[ROVER] Received message type: " << msg_type
+  std::cout << "[ROVER INTERNAL] Routing message type: " << msg_type
             << " from: " << sender_id << std::endl;
 
-  // handle based on message type
+  // Check if it's a command message that needs internal handling
   if (msg_type == CommandMessage::message_type()) {
     auto cmd_msg = dynamic_cast<CommandMessage *>(message.get());
-    std::string command = cmd_msg->get_command();
-    std::string params = cmd_msg->get_params();
-
-    // handle session management commands
-    if (command == "SESSION_ACCEPT") {
-      handle_session_accept();
-    } else if (command == "SESSION_ESTABLISHED") {
-      // handle the explicit session establishment
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      if (session_state_ != SessionState::ACTIVE) {
-        session_state_ = SessionState::ACTIVE;
-        std::cout
-            << "[ROVER] Received explicit SESSION_ESTABLISHED confirmation"
-            << std::endl;
+    if (cmd_msg) {
+      std::string command = cmd_msg->get_command();
+      // Session management commands MUST be handled internally
+      if (command == "SESSION_ACCEPT" || command == "SESSION_ESTABLISHED") {
+        handle_internal_command(cmd_msg, sender);
+        return; // Don't pass session commands to application handler
       }
-
-      // Reset retry counter
-      handshake_retry_count_ = 0;
-
-      // Start the status timer to send status every 10 seconds
-      handle_status_timer();
     }
-    // handle other commands here
   }
+
+  // If not handled internally, pass to the application handler if it exists
+  ApplicationMessageHandler handler_copy;
+  {
+    std::lock_guard<std::mutex> lock(handler_mutex_);
+    handler_copy = application_message_handler_;
+  }
+
+  if (handler_copy) {
+    std::cout << "[ROVER INTERNAL] Passing message type " << msg_type
+              << " to application handler." << std::endl;
+    // Use post to avoid blocking the network thread if the handler is slow
+    boost::asio::post(io_context_,
+                      [handler = std::move(handler_copy),
+                       msg = std::move(message),
+                       ep = sender]() mutable { handler(std::move(msg), ep); });
+  } else {
+    std::cout
+        << "[ROVER INTERNAL] No application handler set for message type: "
+        << msg_type << std::endl;
+  }
+}
+
+// Handles only essential internal commands (like session management)
+void Rover::handle_internal_command(CommandMessage *cmd_msg,
+                                    const udp::endpoint &sender) {
+  if (!cmd_msg)
+    return;
+
+  std::string command = cmd_msg->get_command();
+  std::string params = cmd_msg->get_params();
+
+  std::cout << "[ROVER INTERNAL] Handling command: " << command << std::endl;
+
+  if (command == "SESSION_ACCEPT") {
+    handle_session_accept();
+  } else if (command == "SESSION_ESTABLISHED") {
+    handle_session_established();
+  }
+  // Other internal commands could be added here if needed
 }
 
 void Rover::send_status() {
@@ -163,8 +200,8 @@ void Rover::send_status() {
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     if (session_state_ != SessionState::ACTIVE) {
-      std::cout << "[ROVER] Cannot send status, session not active"
-                << std::endl;
+      // std::cout << "[ROVER] Cannot send status, session not active" <<
+      // std::endl; // Reduce noise
       return;
     }
   }
@@ -173,8 +210,9 @@ void Rover::send_status() {
   StatusMessage status_msg(level, description, rover_id_);
   message_manager_->send_message(status_msg);
 
-  std::cout << "[ROVER] Sent status: " << static_cast<int>(level) << " - "
-            << description << std::endl;
+  // Removed logging from here, can be added in main if needed
+  // std::cout << "[ROVER] Sent status: " << static_cast<int>(level) << " - "
+  //           << description << std::endl;
 }
 
 void Rover::send_command(const std::string &command,
@@ -182,8 +220,9 @@ void Rover::send_command(const std::string &command,
   CommandMessage cmd_msg(command, params, rover_id_);
   message_manager_->send_message(cmd_msg);
 
-  std::cout << "[ROVER] Sent command: " << command << " with params: " << params
-            << std::endl;
+  // Keep essential logging for commands sent
+  std::cout << "[ROVER INTERNAL] Sent command: " << command
+            << " with params: " << params << std::endl;
 }
 
 void Rover::initiate_handshake() {
@@ -195,7 +234,8 @@ void Rover::initiate_handshake() {
   // send SESSION_INIT command
   send_command("SESSION_INIT", rover_id_);
 
-  std::cout << "[ROVER] Sent SESSION_INIT to base station" << std::endl;
+  std::cout << "[ROVER INTERNAL] Sent SESSION_INIT to base station"
+            << std::endl;
 
   // Start a timer to retry handshake if no response
   handshake_timer_.expires_after(std::chrono::seconds(5));
@@ -219,7 +259,7 @@ void Rover::handle_handshake_timer() {
 
     if (handshake_retry_count_ < MAX_HANDSHAKE_RETRIES) {
       handshake_retry_count_++;
-      std::cout << "[ROVER] Handshake timeout, retrying (attempt "
+      std::cout << "[ROVER INTERNAL] Handshake timeout, retrying (attempt "
                 << handshake_retry_count_ << "/" << MAX_HANDSHAKE_RETRIES << ")"
                 << std::endl;
 
@@ -239,8 +279,9 @@ void Rover::handle_handshake_timer() {
         }
       });
     } else {
-      std::cout << "[ROVER] Handshake failed after " << MAX_HANDSHAKE_RETRIES
-                << " attempts. Giving up." << std::endl;
+      std::cout << "[ROVER INTERNAL] Handshake failed after "
+                << MAX_HANDSHAKE_RETRIES << " attempts. Giving up."
+                << std::endl;
 
       // Reset state to INACTIVE
       std::lock_guard<std::mutex> lock(state_mutex_);
@@ -249,17 +290,18 @@ void Rover::handle_handshake_timer() {
   }
 }
 
+// Called internally when SESSION_ACCEPT command is received
 void Rover::handle_session_accept() {
-  std::cout << "[ROVER] Received SESSION_ACCEPT from base station" << std::endl;
+  std::cout << "[ROVER INTERNAL] Processing SESSION_ACCEPT" << std::endl;
 
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
 
     // verify we're in the correct state
     if (session_state_ != SessionState::HANDSHAKE_INIT) {
-      std::cout
-          << "[ROVER] Ignoring SESSION_ACCEPT, not in handshake init state"
-          << std::endl;
+      std::cout << "[ROVER INTERNAL] Ignoring SESSION_ACCEPT, not in handshake "
+                   "init state"
+                << std::endl;
       return;
     }
 
@@ -270,18 +312,44 @@ void Rover::handle_session_accept() {
   // send SESSION_CONFIRM
   send_command("SESSION_CONFIRM", rover_id_);
 
-  {
-    std::lock_guard<std::mutex> lock(state_mutex_);
+  // Don't immediately set ACTIVE here, wait for SESSION_ESTABLISHED
+  // {
+  //   std::lock_guard<std::mutex> lock(state_mutex_);
+  //   session_state_ = SessionState::ACTIVE; // Changed: Wait for confirmation
+  // }
+  // std::cout << "[ROVER INTERNAL] Session established with base station" <<
+  // std::endl;
+
+  // Reset handshake retry count (prematurely, reset on established)
+  // handshake_retry_count_ = 0;
+
+  // start the status timer (prematurely, start on established)
+  // handle_status_timer();
+}
+
+// Called internally when SESSION_ESTABLISHED command is received
+void Rover::handle_session_established() {
+  std::cout << "[ROVER INTERNAL] Processing SESSION_ESTABLISHED" << std::endl;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (session_state_ !=
+      SessionState::ACTIVE) { // Only transition if not already active
+    if (session_state_ != SessionState::HANDSHAKE_ACCEPT) {
+      std::cout << "[ROVER INTERNAL] Warning: Received SESSION_ESTABLISHED in "
+                   "unexpected state: "
+                << static_cast<int>(session_state_) << std::endl;
+    }
     session_state_ = SessionState::ACTIVE;
+    std::cout << "[ROVER INTERNAL] Session ACTIVE" << std::endl;
+
+    // Reset retry counter now that session is fully confirmed
+    handshake_retry_count_ = 0;
+
+    // Cancel handshake timer as it's no longer needed
+    handshake_timer_.cancel();
+
+    // Start the status timer to send status periodically ONLY when active
+    handle_status_timer();
   }
-
-  std::cout << "[ROVER] Session established with base station" << std::endl;
-
-  // Reset handshake retry count
-  handshake_retry_count_ = 0;
-
-  // start the status timer to send status every 10 seconds
-  handle_status_timer();
 }
 
 void Rover::handle_status_timer() {
@@ -299,10 +367,14 @@ void Rover::handle_status_timer() {
   if (is_active) {
     status_timer_.expires_after(std::chrono::seconds(10));
     status_timer_.async_wait([this](const boost::system::error_code &ec) {
-      if (!ec) {
+      // Only reschedule if the timer wasn't cancelled and rover is still active
+      if (!ec && get_session_state() == SessionState::ACTIVE) {
         handle_status_timer();
       }
     });
+  } else {
+    std::cout << "[ROVER INTERNAL] Status timer stopped (session inactive)."
+              << std::endl;
   }
 }
 
