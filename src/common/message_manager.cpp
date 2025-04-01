@@ -42,7 +42,6 @@ void MessageManager::stop() {
   if (!running_)
     return;
   running_ = false;
-  // Optionally, could unregister the callback from protocol_ here if needed.
   std::cout << "[MESSAGE MANAGER] Stopped for sender ID: " << sender_id_
             << std::endl;
 }
@@ -68,16 +67,13 @@ void MessageManager::send_message(const Message &message,
     // Pass the binary payload and metadata down to the LumenProtocol layer.
     protocol_.send_message(payload, lumen_type, priority, recipient);
 
-    // Logging: Determine the target endpoint for logging clarity.
+    // Logging: Determine the target endpoint for logging
     udp::endpoint log_recipient = recipient;
     if (log_recipient.address().is_unspecified() && client_) {
       // If recipient is default and we are a client, log the client's base
       // endpoint.
       log_recipient = client_->get_base_endpoint();
     }
-    // std::cout << "[MESSAGE MANAGER] Sent message type: " <<
-    // message.get_type() << " via protocol to " << log_recipient << std::endl;
-    // // Reduced verbosity
 
   } catch (const std::exception &e) {
     std::cerr << "[ERROR] MessageManager failed to send message type "
@@ -107,7 +103,7 @@ void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
     // string.
     std::string json_str = binary_to_string(payload);
 
-    // Basic validation to ensure the payload is potentially valid JSON.
+    // validation to ensure the payload is valid JSON.
     if (!Message::is_valid_json(json_str)) {
       std::cerr << "[ERROR] MessageManager received invalid JSON payload from "
                    "protocol. Seq: "
@@ -141,8 +137,6 @@ void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
       // Move ownership of the unique_ptr to the application layer.
       app_callback_copy(std::move(message), sender);
     } else {
-      // This might be normal if the application hasn't set a handler yet, or an
-      // issue.
       std::cout << "[MESSAGE MANAGER] Warning: No application callback set to "
                    "handle message type "
                 << (message ? message->get_type() : "unknown") << " from "
@@ -185,24 +179,15 @@ void MessageManager::send_raw_message(const Message &message,
     // data.
     if (server_) { // If configured with a server (BaseStation mode)
       server_->send_data(data, recipient);
-      // std::cout << "[MESSAGE MANAGER] Sent raw (JSON) message type: " <<
-      // message.get_type() << " via UdpServer to " << recipient << std::endl;
-      // // Reduced verbosity
     } else if (client_) { // If configured with a client (Rover mode)
       // UdpClient needs to differentiate sending to default base vs. specific
       // endpoint
       if (recipient.address().is_unspecified() ||
           recipient == client_->get_base_endpoint()) {
         client_->send_data(data); // Send to default registered base
-        // std::cout << "[MESSAGE MANAGER] Sent raw (JSON) message type: " <<
-        // message.get_type() << " via UdpClient to base " <<
-        // client_->get_base_endpoint() << std::endl; // Reduced verbosity
       } else {
         client_->send_data_to(
             data, recipient); // Send to a specific non-base endpoint
-        // std::cout << "[MESSAGE MANAGER] Sent raw (JSON) message type: " <<
-        // message.get_type() << " via UdpClient to specific " << recipient <<
-        // std::endl; // Reduced verbosity
       }
     } else {
       // Should not happen if constructor logic is correct.

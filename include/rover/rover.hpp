@@ -8,9 +8,8 @@ class MessageManager;
 class Message;
 class CommandMessage;
 class StatusMessage;
-// class TelemetryMessage; // Included via status_message.hpp now
 
-#include "status_message.hpp" // Includes TelemetryMessage transitively? Check includes if needed.
+#include "status_message.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -19,7 +18,6 @@ class StatusMessage;
 #include <map>
 #include <memory>
 #include <mutex>
-#include <set> // Added
 #include <string>
 
 using boost::asio::ip::udp;
@@ -255,7 +253,7 @@ private:
 
   // --- Callbacks ---
   ApplicationMessageHandler application_message_handler_ = nullptr;
-  DiscoveryMessageHandler discovery_message_handler_ = nullptr; // NEW
+  DiscoveryMessageHandler discovery_message_handler_ = nullptr;
 
   // --- State Variables ---
   SessionState session_state_;
@@ -263,15 +261,14 @@ private:
   StatusMessage::StatusLevel current_status_level_;
   std::string current_status_description_;
   int handshake_retry_count_;
-  std::map<std::string, udp::endpoint> discovered_rovers_; // NEW
+  std::map<std::string, udp::endpoint> discovered_rovers_;
 
   // --- Thread Safety ---
   mutable std::mutex state_mutex_;
   std::mutex status_mutex_;
   std::mutex handler_mutex_;
-  mutable std::mutex discovery_mutex_; // NEW - protects discovered_rovers_
-  std::mutex
-      discovery_handler_mutex_; // NEW - protects discovery_message_handler_
+  mutable std::mutex discovery_mutex_;
+  std::mutex discovery_handler_mutex_;
 
   // --- Constants ---
   static constexpr int MAX_HANDSHAKE_RETRIES = 5;

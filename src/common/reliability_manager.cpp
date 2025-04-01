@@ -87,9 +87,6 @@ void ReliabilityManager::add_send_packet(uint8_t seq, const LumenPacket &packet,
   sent_packets_.emplace(
       seq,
       SentPacketInfo{packet, std::chrono::steady_clock::now(), 0, recipient});
-
-  // std::cout << "[RELIABILITY] Tracking packet with seq: " <<
-  // static_cast<int>(seq) << std::endl; // Reduced verbosity
 }
 
 void ReliabilityManager::process_ack(uint8_t seq) {
@@ -104,15 +101,10 @@ void ReliabilityManager::process_ack(uint8_t seq) {
   if (it != sent_packets_.end()) {
     // Packet acknowledged, remove it from tracking. No need to retransmit.
     sent_packets_.erase(it);
-    // std::cout << "[RELIABILITY] Received ACK for seq: " <<
-    // static_cast<int>(seq) << ", removed from retransmission tracking." <<
-    // std::endl; // Reduced verbosity
   } else {
     // This can happen if the ACK arrives after the packet was already
     // retransmitted and subsequently ACKed, or if it's a duplicate ACK. It's
-    // usually benign. std::cout << "[RELIABILITY] Received ACK for seq: " <<
-    // static_cast<int>(seq) << ", but packet not in tracking (already ACKed or
-    // timed out?)." << std::endl; // Reduced verbosity
+    // usually benign.
   }
 }
 
@@ -202,28 +194,14 @@ ReliabilityManager::get_missing_sequences(const udp::endpoint &sender) {
     // (uint8_t arithmetic).
     uint8_t seq_to_check = highest_seq - i;
 
-    // Sequence number 0 might be skipped in some protocols, handle
-    // appropriately if needed. Currently, assume 0 is a valid sequence number
-    // to check.
-
     // If the sequence number to check is *not* found in our map of received
     // sequences...
     if (sequence_map.find(seq_to_check) == sequence_map.end()) {
       // ...it *might* be missing. Add it to the list of potential missing
-      // sequences. A simple implementation might just add it here. A more
-      // robust version could add checks for out-of-order tolerance: e.g., only
-      // consider it missing if we received 'highest_seq' some time ago,
-      // allowing time for 'seq_to_check' to arrive out of order.
-      // The current implementation in the original code had a time check, but
-      // it's simplified here. Let's stick to the simpler logic for now: if not
-      // found in the window, assume missing.
+      // sequences.
       missing_seqs.push_back(seq_to_check);
-      // std::cout << "[RELIABILITY] Detected potential missing seq: " <<
-      // static_cast<int>(seq_to_check) << " (highest was " <<
-      // static_cast<int>(highest_seq) << ")" << std::endl; // Debugging
     }
   }
-
   // Return the list of sequences suspected to be missing.
   // LumenProtocol will use this list and check is_recently_naked before sending
   // NAKs.
@@ -263,8 +241,7 @@ ReliabilityManager::get_packets_to_retransmit() {
   std::lock_guard<std::mutex> lock(sent_packets_mutex_);
 
   // Iterate through packets we've sent and are tracking.
-  for (auto it = sent_packets_.begin(); it != sent_packets_.end();
-       /* no increment here */) {
+  for (auto it = sent_packets_.begin(); it != sent_packets_.end();) {
     auto &info = it->second; // Reference to SentPacketInfo
     uint8_t seq = it->first;
 
@@ -366,8 +343,6 @@ void ReliabilityManager::handle_retransmission_timer() {
   if (running_) {
     retransmit_timer_.expires_at(retransmit_timer_.expiry() +
                                  RELIABILITY_CHECK_INTERVAL);
-    // Use weak_ptr or similar if lifetime issues arise, but for now, assume
-    // manager outlives timer handler.
     retransmit_timer_.async_wait(
         [this](const boost::system::error_code &error) {
           // Check error code (e.g., operation_aborted if stop() is called) and
@@ -391,8 +366,7 @@ void ReliabilityManager::cleanup_old_entries() {
     for (auto &pair : received_sequences_) {
       auto &sequence_map = pair.second;
       // Iterate through sequences received from this endpoint
-      for (auto it = sequence_map.begin(); it != sequence_map.end();
-           /* no increment */) {
+      for (auto it = sequence_map.begin(); it != sequence_map.end();) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - it->second); // Time since received
         if (elapsed > SEQUENCE_RETAIN_TIME) {
@@ -404,8 +378,6 @@ void ReliabilityManager::cleanup_old_entries() {
         }
       }
     }
-    // Optional: Remove endpoints entirely if their sequence map becomes empty
-    // after cleanup.
   }
 
   // Clean up recent NAKs map
@@ -429,23 +401,15 @@ void ReliabilityManager::cleanup_old_entries() {
   {
     std::lock_guard<std::mutex> lock(acked_sequences_mutex_);
     // Simple approach: Clear the entire ACKed map periodically.
-    // Assumes duplicate packets are less frequent than the cleanup interval.
-    // A more complex approach could timestamp ACK records.
-    if (now >
-        last_ack_cleanup_time_ +
-            CLEANUP_INTERVAL * 2) { // Clean less frequently than main cleanup?
+    if (now > last_ack_cleanup_time_ + CLEANUP_INTERVAL * 2) {
       acked_sequences_.clear();
       last_ack_cleanup_time_ = now;
-      // std::cout << "[RELIABILITY] Cleared ACKed sequences map." << std::endl;
-      // // Debugging
     }
   }
 
   // Note: sent_packets_ are implicitly cleaned up when ACKed (Rover) or max
   // retries reached (Rover). Base station keeps sent packets until NAKed or
   // potentially cleaned up if a very old packet gets NAKed (edge case).
-  // Consider adding cleanup for very old sent_packets_ in Base Station mode if
-  // memory growth is a concern.
 }
 
 // Periodic timer handler for cleaning up old tracking entries.

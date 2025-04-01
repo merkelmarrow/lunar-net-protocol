@@ -1,7 +1,6 @@
 // src/rover/rover.cpp
 
 #include "rover.hpp"
-#include "basic_message.hpp" // Include for potential discovery messages
 #include "command_message.hpp"
 #include "message_manager.hpp"
 #include "status_message.hpp"
@@ -11,10 +10,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
-#include <set>     // Include set if needed for tracking discovery requests
-#include <sstream> // For endpoint_to_string helper
 
-// Helper (can be local or in a utility file)
 namespace { // Use anonymous namespace for internal linkage
 std::string endpoint_to_string(const udp::endpoint &ep) {
   boost::system::error_code ec;
@@ -229,9 +225,6 @@ void Rover::update_status(StatusMessage::StatusLevel level,
   std::lock_guard<std::mutex> lock(status_mutex_);
   current_status_level_ = level;
   current_status_description_ = description;
-  // std::cout << "[ROVER] Internal status updated to: " <<
-  // static_cast<int>(level) << " - " << description << std::endl; // Reduced
-  // verbosity
 }
 
 void Rover::send_status() {
@@ -261,8 +254,6 @@ void Rover::send_status() {
       }
       message_manager_->send_message(status_msg,
                                      base_ep); // Send status only to base
-      // std::cout << "[ROVER] Sent status: " << static_cast<int>(current_level)
-      // << " - " << current_desc << std::endl; // Reduced verbosity
     } else {
       std::cerr << "[ROVER] Error: Cannot send status, MessageManager is null."
                 << std::endl;
@@ -287,8 +278,7 @@ void Rover::scan_for_rovers(int discovery_port, const std::string &message) {
     std::vector<uint8_t> data_to_send(json_payload.begin(), json_payload.end());
 
     // Call the UdpClient's broadcast method
-    client_->send_broadcast_data(
-        data_to_send, discovery_port); // Uses default 255.255.255.255
+    client_->send_broadcast_data(data_to_send, discovery_port); // Uses default
 
   } catch (const std::exception &e) {
     std::cerr << "[ROVER] Error during discovery scan: " << e.what()
@@ -319,7 +309,7 @@ void Rover::handle_discovery_command(CommandMessage *cmd_msg,
             << "' from " << sender_id << " at " << endpoint_to_string(sender)
             << std::endl;
 
-  // Handle an announcement from another rover (likely a response to our probe)
+  // Handle an announcement from another rover
   if (command == "ROVER_ANNOUNCE") {
     bool is_new = false;
     {
@@ -352,8 +342,6 @@ void Rover::handle_discovery_command(CommandMessage *cmd_msg,
         });
       }
     } else {
-      // Optionally log if an existing rover announced itself again (e.g.,
-      // updated endpoint)
       std::cout << "[ROVER DISCOVERY] Rover " << sender_id
                 << " announced again from " << endpoint_to_string(sender) << "."
                 << std::endl;
@@ -468,9 +456,6 @@ void Rover::handle_internal_command(CommandMessage *cmd_msg,
   if (!cmd_msg)
     return;
   const std::string &command = cmd_msg->get_command();
-
-  // std::cout << "[ROVER INTERNAL] Handling internal command: '" << command <<
-  // "'" << std::endl; // Reduced verbosity
 
   if (command == "SESSION_ACCEPT") {
     handle_session_accept();
@@ -617,21 +602,20 @@ void Rover::handle_status_timer() {
   if (is_active) {
     boost::system::error_code ec;
     status_timer_.expires_after(STATUS_INTERVAL);
-    status_timer_.async_wait([this](const boost::system::error_code &ec) {
-      // Check error code and if still active before recursing
-      if (!ec && get_session_state() == SessionState::ACTIVE) {
-        handle_status_timer();
-      } else if (ec && ec != boost::asio::error::operation_aborted) {
-        std::cerr << "[ROVER INTERNAL] Status timer wait error: "
-                  << ec.message() << std::endl;
-        // Optionally try restarting timer even after error? Depends on error
-        // type.
-      } else if (!is_active) {
-        std::cout << "[ROVER INTERNAL] Status timer stopping (session no "
-                     "longer active)."
-                  << std::endl;
-      }
-    });
+    status_timer_.async_wait(
+        [this, &is_active](const boost::system::error_code &ec) {
+          // Check error code and if still active before recursing
+          if (!ec && get_session_state() == SessionState::ACTIVE) {
+            handle_status_timer();
+          } else if (ec && ec != boost::asio::error::operation_aborted) {
+            std::cerr << "[ROVER INTERNAL] Status timer wait error: "
+                      << ec.message() << std::endl;
+          } else if (!is_active) {
+            std::cout << "[ROVER INTERNAL] Status timer stopping (session no "
+                         "longer active)."
+                      << std::endl;
+          }
+        });
   } else {
     std::cout
         << "[ROVER INTERNAL] Status timer not rescheduled (session inactive)."
@@ -670,7 +654,4 @@ void Rover::send_command(const std::string &command,
               << command << "': " << e.what() << std::endl;
     return;
   }
-  message_manager_->send_message(cmd_msg, base_ep);
-  // std::cout << "[ROVER INTERNAL] Sent command: '" << command << "' with
-  // params: '" << params << "'" << std::endl; // Reduced verbosity
 }

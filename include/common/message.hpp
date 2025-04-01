@@ -107,23 +107,6 @@ public:
    */
   static std::unique_ptr<Message> deserialise(const std::string &json_str);
 
-  /**
-   * @brief Factory method to create a message object from basic string inputs.
-   * This is less robust than `deserialise` as it makes assumptions about how to
-   * parse the `content` string based on the `type`. Primarily useful for
-   * testing or simple interfaces. Requires subclasses to implement a
-   * corresponding static `create_from_content` method.
-   * @param type The message type identifier string (e.g., "BasicMessage").
-   * @param content The content string (format depends on the message type).
-   * @param sender The sender ID string.
-   * @return std::unique_ptr<Message> A pointer to the created Message subclass
-   * instance.
-   * @throws std::runtime_error if the type is unknown or content parsing fails.
-   */
-  static std::unique_ptr<Message> create(const std::string &type,
-                                         const std::string &content,
-                                         const std::string &sender);
-
 protected:
   /**
    * @brief Protected constructor for base class initialization by derived

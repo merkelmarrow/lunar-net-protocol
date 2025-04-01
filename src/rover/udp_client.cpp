@@ -34,7 +34,6 @@ void UdpClient::enable_broadcast() {
   if (ec) {
     std::cerr << "[CLIENT] Warning: Failed to set broadcast socket option: "
               << ec.message() << std::endl;
-    // Depending on requirements, this could be a fatal error.
   } else {
     std::cout << "[CLIENT] Broadcast socket option enabled." << std::endl;
   }
@@ -100,7 +99,6 @@ void UdpClient::send_data_to(const std::vector<uint8_t> &data,
       });
 }
 
-// NEW: Send Broadcast Data
 void UdpClient::send_broadcast_data(const std::vector<uint8_t> &data,
                                     int broadcast_port,
                                     const std::string &broadcast_address_str) {
@@ -122,10 +120,6 @@ void UdpClient::send_broadcast_data(const std::vector<uint8_t> &data,
     broadcast_endpoint = udp::endpoint(broadcast_addr, broadcast_port);
   }
 
-  // Ensure broadcast is enabled (attempt again just in case)
-  // enable_broadcast(); // Might be redundant if done in constructor and
-  // doesn't fail
-
   std::cout << "[CLIENT] Sending broadcast (" << data.size() << " bytes) to "
             << broadcast_endpoint << std::endl;
 
@@ -137,13 +131,10 @@ void UdpClient::send_broadcast_data(const std::vector<uint8_t> &data,
           std::cerr << "[ERROR] UdpClient::send_broadcast_data failed to "
                     << broadcast_endpoint << ": " << error.message()
                     << std::endl;
-          // Common errors: Network unreachable (no route to broadcast),
-          // Permission denied
         }
       });
 }
 
-// MODIFIED: Set Receive Callback (accepts new signature)
 void UdpClient::set_receive_callback(
     std::function<void(const std::vector<uint8_t> &, const udp::endpoint &)>
         callback) {
@@ -185,7 +176,6 @@ const udp::endpoint &UdpClient::get_base_endpoint() const {
   return base_endpoint_;
 }
 
-// MODIFIED: Handle Receive (calls new callback signature)
 void UdpClient::handle_receive(const boost::system::error_code &error,
                                std::size_t bytes_transferred) {
 
@@ -238,7 +228,7 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
       auto timer = std::make_shared<boost::asio::steady_timer>(
           io_context_, CLIENT_RETRY_DELAY);
       timer->async_wait([this, timer](const boost::system::error_code &ec) {
-        // Check running flag *again* inside the timer callback
+        // Check running flag again inside the timer callback
         if (!ec && running_.load()) {
           std::cout << "[CLIENT] Retrying receiver start..." << std::endl;
           do_receive();

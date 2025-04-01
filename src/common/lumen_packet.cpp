@@ -45,8 +45,6 @@ LumenPacket::from_bytes(const std::vector<uint8_t> &bytes) {
     std::cerr << "[ERROR] LumenPacket::from_bytes: Missing or incorrect ETX "
                  "marker. Expected size: "
               << expected_size << std::endl;
-    // Malformed packet. Consider searching for the next STX if recovery is
-    // needed.
     return std::nullopt;
   }
 

@@ -56,7 +56,7 @@ public:
 
   /**
    * @brief Returns the default Lumen protocol priority for this message type.
-   * @return LumenHeader::Priority Typically MEDIUM for basic data messages.
+   * @return LumenHeader::Priority MEDIUM for basic data messages.
    */
   LumenHeader::Priority get_lumen_priority() const override {
     return LumenHeader::Priority::MEDIUM; // Default priority

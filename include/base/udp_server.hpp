@@ -7,7 +7,6 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <functional> // For std::function
-#include <memory>     // For std::shared_ptr in potential complex handlers
 #include <mutex>
 #include <vector>
 
@@ -17,7 +16,7 @@ using boost::asio::ip::udp;
  * @class UdpServer
  * @brief Provides asynchronous UDP server functionality using Boost.Asio.
  *
- * This class is designed for the Base Station component. It binds to a
+ * This class is for the base station. It binds to a
  * specified port, listens for incoming UDP datagrams, and provides mechanisms
  * to send datagrams to specific client endpoints. It uses the provided
  * Boost.Asio io_context to manage asynchronous operations.

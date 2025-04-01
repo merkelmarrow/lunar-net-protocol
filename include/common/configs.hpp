@@ -51,10 +51,6 @@ constexpr std::chrono::milliseconds RELIABILITY_CHECK_INTERVAL{
            ///< (Rover only).
 
 // --- Reliability Manager Constants (Sequence Tracking & Cleanup) ---
-// Note: Some constants like WINDOW_SIZE are defined directly in
-// ReliabilityManager.hpp, consider consolidating if needed. static constexpr
-// uint8_t WINDOW_SIZE = 16; // Example from ReliabilityManager.hpp - size of
-// the window for detecting missing packets (Rover).
 static constexpr std::chrono::milliseconds NAK_DEBOUNCE_TIME{
     1000}; ///< Minimum time between sending NAKs for the same sequence number
            ///< (Rover only).
@@ -63,10 +59,6 @@ static constexpr std::chrono::milliseconds CLEANUP_INTERVAL{
 static constexpr std::chrono::milliseconds SEQUENCE_RETAIN_TIME{
     30000}; ///< How long ReliabilityManager keeps records of received
             ///< sequences.
-// static constexpr uint8_t MAX_LOOKAHEAD = 32; // Maximum sequence lookahead
-// (Appears unused? Maybe intended for ReliabilityManager) static constexpr
-// uint8_t MAX_LOOKBEHIND = 16; // Maximum sequence lookbehind (Appears unused?
-// Maybe intended for ReliabilityManager)
 
 // --- Lumen Protocol Constants ---
 constexpr size_t MAX_FRAME_BUFFER_SIZE =

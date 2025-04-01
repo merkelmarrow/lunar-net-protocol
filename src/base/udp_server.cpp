@@ -1,11 +1,9 @@
 // src/base/udp_server.cpp
 
 #include "udp_server.hpp"
-#include "configs.hpp" // For SERVER_SOCK_BUF_SIZE
 #include <boost/asio/buffer.hpp>
 #include <boost/system/error_code.hpp>
 #include <iostream>
-#include <memory> // For std::make_shared
 #include <vector> // For std::vector
 
 UdpServer::UdpServer(boost::asio::io_context &context, int port)
@@ -75,9 +73,6 @@ void UdpServer::send_data(const std::vector<uint8_t> &data,
                                 << recipient << ": " << ec.message()
                                 << std::endl;
                           } else {
-                            // Optional: Log successful send - can be verbose.
-                            // std::cout << "[SERVER] Sent " << bytes_sent << "
-                            // bytes to " << recipient << std::endl;
                           }
                         });
 }
@@ -90,7 +85,7 @@ void UdpServer::receive_data() {
   // Start an asynchronous receive operation.
   // Data will be placed into buffer_.
   // The sender's endpoint will be stored in sender_endpoint_.
-  // The provided lambda is the completion handler.
+  // The lambda is the completion handler.
   socket_.async_receive_from(
       boost::asio::buffer(buffer_), // Target buffer
       sender_endpoint_,             // Will be populated with sender's endpoint
@@ -115,14 +110,7 @@ void UdpServer::receive_data() {
                              const udp::endpoint &)>
               callback_copy;
           {
-            // Note: Locking endpoint_mutex might not be strictly necessary if
-            // only accessed here and get_sender_endpoint, but kept for
-            // consistency if access patterns change. Callback mutex is
-            // important. std::lock_guard<std::mutex>
-            // endpoint_lock(endpoint_mutex_); // Might be overkill
             std::lock_guard<std::mutex> callback_lock(callback_mutex_);
-            // endpoint_copy = sender_endpoint_; // Already captured by value
-            // above
             callback_copy = receive_callback_;
           }
 
@@ -154,26 +142,14 @@ void UdpServer::receive_data() {
           // An unexpected error occurred.
           std::cerr << "[ERROR] UdpServer receive error: " << ec.message()
                     << std::endl;
-          // Consider if the server should stop or try to recover.
-          // For now, we stop the receive loop on error. To retry, a mechanism
-          // similar to UdpClient's timer-based retry could be added here.
-          // stop(); // Example: Stop server on receive error
-          // Or: Attempt to restart receive after a delay
-          if (running_) { // Check running_ again
-            std::cerr << "[SERVER] Attempting to restart receiver..."
-                      << std::endl;
-            // Re-issue receive immediately (might loop on persistent errors)
-            // or use a timer for delayed retry. Let's try immediate for now.
-            receive_data();
-          }
+
+          stop();
         }
         // If !running_, the handler simply returns, stopping the loop.
       }); // End of completion handler lambda
 }
 
-// Provides access to the endpoint of the most recent sender. Note potential
-// race condition if called exactly when a new packet arrives and
-// sender_endpoint_ is being updated. Locking helps.
+// Provides access to the endpoint of the most recent sender.
 const udp::endpoint UdpServer::get_sender_endpoint() {
   std::lock_guard<std::mutex> lock(endpoint_mutex_);
   return sender_endpoint_;

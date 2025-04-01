@@ -96,7 +96,7 @@ public:
 
   /**
    * @brief Sets the callback function to be invoked when a message is
-   * successfully deserialized. This callback is typically set by the
+   * successfully deserialized. This callback is set by the
    * application layer (BaseStation/Rover) to receive messages.
    * @param callback Function taking (std::unique_ptr<Message> received_message,
    * const udp::endpoint& sender_endpoint).
@@ -134,10 +134,9 @@ private:
    * @param header The LumenHeader associated with the payload.
    * @param sender The original sender's UDP endpoint.
    */
-  void handle_lumen_message(
-      const std::vector<uint8_t> &payload,
-      const LumenHeader &header, // Header might be useful for context/logging
-      const udp::endpoint &sender);
+  void handle_lumen_message(const std::vector<uint8_t> &payload,
+                            const LumenHeader &header,
+                            const udp::endpoint &sender);
 
   /**
    * @brief Helper function to convert a string to a vector of bytes.

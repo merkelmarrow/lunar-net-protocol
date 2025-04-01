@@ -53,11 +53,14 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
       });
 
   // Set the callback for the underlying UdpClient to pass received data up to
-  // this protocol layer Note: The client receives data and assumes it's from
-  // the base station endpoint it's registered with.
-  client_->set_receive_callback([this](const std::vector<uint8_t> &data) {
-    handle_udp_data(data, client_->get_base_endpoint());
-  });
+  // this protocol layer
+  client_->set_receive_callback(
+      [this](const std::vector<uint8_t> &data,
+             const udp::endpoint &sender) { // <-- Added sender parameter
+        // Pass the received data AND the actual sender endpoint to
+        // handle_udp_data
+        handle_udp_data(data, sender);
+      });
 
   std::cout << "[LUMEN] Created protocol in ROVER mode" << std::endl;
 }
@@ -172,8 +175,7 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
     return;
 
   // --- Handling for Raw JSON (without LUMEN headers) ---
-  // This allows simpler communication for testing or specific cases where the
-  // full protocol overhead isn't needed.
+  // This allows for easy communication between the rovers
   if (!data.empty() && data[0] != LUMEN_STX) {
     // Check if it looks like a JSON object
     if (data[0] == '{') {
@@ -238,8 +240,8 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
   // --- Normal LUMEN Packet Processing ---
   std::string endpoint_key = get_endpoint_key(endpoint);
 
-  // Store the actual endpoint object associated with this key, useful if
-  // multiple endpoints send data.
+  // Store the actual endpoint object associated with this key, useful when
+  // multiple rovers send data
   {
     std::lock_guard<std::mutex> lock(endpoint_mutex_);
     endpoint_map_[endpoint_key] = endpoint;
@@ -273,10 +275,6 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
     // ETX.
     auto packet_opt = LumenPacket::from_bytes(buffer);
     if (!packet_opt) {
-      // Not enough data for a complete packet, or data is malformed at the
-      // start. If malformed, need a mechanism to find the next STX, otherwise
-      // wait for more data. For now, we assume well-formed streams or wait. A
-      // robust implementation might scan for STX.
       break;
     }
 
@@ -459,17 +457,11 @@ void LumenProtocol::send_packet(const LumenPacket &packet,
         return;
       }
       // Rover needs to distinguish between sending to the main base station
-      // or potentially another specific endpoint (though less common for
-      // rover).
+      // or another rover
       if (recipient == client_->get_base_endpoint()) {
         client_->send_data(
             data); // Use the client's default send (to registered base)
       } else {
-        // This case might be used if Rover needs to respond directly to a
-        // specific endpoint other than the main base, potentially during
-        // discovery or complex scenarios.
-        std::cout << "[LUMEN] Rover sending packet to non-default endpoint: "
-                  << recipient << std::endl;
         client_->send_data_to(data, recipient);
       }
     }

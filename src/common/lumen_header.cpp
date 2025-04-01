@@ -18,8 +18,6 @@ std::optional<LumenHeader>
 LumenHeader::from_bytes(const std::vector<uint8_t> &bytes) {
   // Check if there are enough bytes for the fixed-size header.
   if (bytes.size() < LUMEN_HEADER_SIZE) {
-    // std::cerr << "[DEBUG] LumenHeader::from_bytes: Insufficient bytes (" <<
-    // bytes.size() << " < " << LUMEN_HEADER_SIZE << ")" << std::endl;
     return std::nullopt;
   }
 
@@ -49,7 +47,7 @@ LumenHeader::from_bytes(const std::vector<uint8_t> &bytes) {
   payload_length |= static_cast<uint16_t>(bytes[LUMEN_LEN_POS]) << 8;
   payload_length |= static_cast<uint16_t>(bytes[LUMEN_LEN_POS + 1]);
 
-  // Basic validation for enum ranges (adjust if enums change).
+  // Basic validation for enum ranges
   if (static_cast<uint8_t>(type) >
       5) { // Assuming max enum value for MessageType is 5 (NAK)
     std::cerr << "[ERROR] LumenHeader::from_bytes: Invalid MessageType value: "
@@ -119,4 +117,4 @@ void LumenHeader::set_sequence(uint8_t seq) { sequence_ = seq; }
 void LumenHeader::set_timestamp(uint32_t timestamp) { timestamp_ = timestamp; }
 void LumenHeader::set_payload_length(uint16_t length) {
   payload_length_ = length;
-} // Renamed parameter for clarity
+}

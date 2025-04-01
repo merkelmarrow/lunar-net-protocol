@@ -17,7 +17,7 @@
  * byte vectors for transmission, and deserializing them from received byte
  * streams. It also includes CRC validation logic.
  *
- * The packet structure is generally:
+ * The packet structure is:
  * [LumenHeader (10 bytes)] + [Payload (variable length)] + [CRC (1 byte)] +
  * [ETX (1 byte)]
  */

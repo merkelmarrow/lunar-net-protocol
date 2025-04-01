@@ -28,7 +28,7 @@ using boost::asio::ip::udp;
  *
  * This class orchestrates the communication layers (UDP Server, Lumen Protocol,
  * Message Manager) for the base station. It handles session management
- * (handshake with a single Rover), routes incoming messages to appropriate
+ * (handshake with the Rover), routes incoming messages to appropriate
  * internal handlers or application-level callbacks, and provides methods for
  * sending commands and messages to the connected Rover.
  */
@@ -40,8 +40,7 @@ public:
    */
   enum class SessionState {
     INACTIVE,         ///< No active session, listening for connections.
-    HANDSHAKE_INIT,   ///< Received SESSION_INIT from a rover. DEPRECATED
-                      ///< (transition happens within handler now).
+    HANDSHAKE_INIT,   ///< Received SESSION_INIT from a rover.
     HANDSHAKE_ACCEPT, ///< Sent SESSION_ACCEPT, waiting for SESSION_CONFIRM.
     ACTIVE ///< Handshake complete, session is active with a connected rover.
   };

@@ -2,8 +2,6 @@
 
 #pragma once
 
-#include "configs.hpp" // Provides constants like LUMEN_HEADER_SIZE, *_POS
-#include <cstddef>     // For size_t
 #include <cstdint>
 #include <optional> // For std::optional return type
 #include <vector>
@@ -36,7 +34,7 @@ public:
     ACK = 0,    ///< Acknowledgement packet.
     CMD = 1,    ///< Command message.
     DATA = 2,   ///< Generic data message (e.g., telemetry).
-    VIDEO = 3,  ///< Video stream data (not fully implemented/used).
+    VIDEO = 3,  ///< Video stream data
     STATUS = 4, ///< Status message.
     NAK = 5     ///< Negative Acknowledgement (retransmission request).
   };

@@ -2,12 +2,10 @@
 
 #include "base_station.hpp"
 
-// Include necessary message types used in this class
 #include "command_message.hpp"
 #include "message_manager.hpp"
 #include "status_message.hpp"
 #include "telemetry_message.hpp"
-// #include "basic_message.hpp" // Only include if BasicMessage is handled here
 
 #include <iostream>
 #include <map>    // For map in status/telemetry handling
@@ -128,10 +126,6 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
   std::string msg_type = message->get_type();
   std::string sender_id = message->get_sender();
 
-  // std::cout << "[BASE INTERNAL] Routing message type: " << msg_type << "
-  // from: " << sender_id << " at: " << sender << std::endl; // Reduced
-  // verbosity
-
   // --- Internal Handling ---
   // Certain messages MUST be handled internally, primarily session management.
 
@@ -194,14 +188,16 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
       handle_internal_status(dynamic_cast<StatusMessage *>(message.get()),
                              status_cb_copy);
       // Decide whether status messages handled by status_callback_ should ALSO
-      // go to the general handler. return; // Uncomment to make
-      // status_callback_ exclusive
+      // go to the general handler.
+
+      // return; // Uncomment to make status_callback_ exclusive
     } else if (msg_type == TelemetryMessage::message_type()) {
       handle_internal_telemetry(dynamic_cast<TelemetryMessage *>(message.get()),
                                 status_cb_copy);
       // Decide whether telemetry messages handled by status_callback_ should
-      // ALSO go to the general handler. return; // Uncomment to make
-      // status_callback_ exclusive
+      // ALSO go to the general handler.
+
+      // return; // Uncomment to make status_callback_ exclusive
     }
   }
 
@@ -215,8 +211,6 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
   }
 
   if (handler_copy) {
-    // std::cout << "[BASE INTERNAL] Passing message type '" << msg_type << "'
-    // to application handler." << std::endl; // Reduced verbosity Use
     // boost::asio::post to ensure the handler runs on the io_context thread
     // without blocking the current network processing thread.
     boost::asio::post(io_context_, [handler = std::move(handler_copy),
@@ -251,7 +245,7 @@ void BaseStation::handle_internal_command(CommandMessage *cmd_msg,
     return;
   const std::string &command = cmd_msg->get_command();
   const std::string &params =
-      cmd_msg->get_params(); // Typically the rover_id for session commands
+      cmd_msg->get_params(); // Rover ID for session commands
   const std::string &sender_id =
       cmd_msg->get_sender(); // Get sender ID from message object
 
@@ -266,7 +260,6 @@ void BaseStation::handle_internal_command(CommandMessage *cmd_msg,
     // Pass the sender_id from the message.
     handle_session_confirm(sender_id, sender);
   }
-  // Add other internal commands here if necessary
 }
 
 // Internal processor for StatusMessages, invokes the specific status_callback_
@@ -276,9 +269,6 @@ void BaseStation::handle_internal_status(StatusMessage *status_msg,
     return;
 
   std::string sender_id = status_msg->get_sender();
-  // std::cout << "[BASE INTERNAL] Processing Status from " << sender_id << ":
-  // Level=" << static_cast<int>(status_msg->get_level()) << ", Desc=" <<
-  // status_msg->get_description() << std::endl; // Reduced verbosity
 
   // Convert status info to the map format expected by the callback
   std::map<std::string, double> status_data;
@@ -308,9 +298,6 @@ void BaseStation::handle_internal_telemetry(TelemetryMessage *telemetry_msg,
   std::string sender_id = telemetry_msg->get_sender();
   const auto &readings =
       telemetry_msg->get_readings(); // Get telemetry data map
-
-  // std::cout << "[BASE INTERNAL] Processing Telemetry from " << sender_id << "
-  // (" << readings.size() << " readings)" << std::endl; // Reduced verbosity
 
   // Post the callback execution to the io_context thread pool
   boost::asio::post(io_context_, [cb = callback, id = sender_id,
@@ -348,8 +335,7 @@ void BaseStation::handle_session_init(const std::string &rover_id,
       return; // Reject new session attempt
     }
 
-    // Handle cases: New connection, reconnection from same rover (maybe new
-    // endpoint), re-initiation
+    // Handle cases: New connection, reconnection from same rover
     if (connected_rover_id_ == rover_id) {
       if (rover_endpoint_ != sender) {
         std::cout << "[BASE INTERNAL] Rover '" << rover_id
@@ -420,14 +406,13 @@ void BaseStation::handle_session_confirm(const std::string &rover_id,
 
   // Send final SESSION_ESTABLISHED confirmation if flagged
   if (send_established) {
-    // Send base station ID in params?
     send_command("SESSION_ESTABLISHED", station_id_);
     std::cout << "[BASE INTERNAL] Sent SESSION_ESTABLISHED to rover '"
               << rover_id << "'." << std::endl;
   }
 }
 
-// Sends a command message TO THE CURRENTLY CONNECTED ROVER.
+// Sends a command message to the connected rover
 void BaseStation::send_command(const std::string &command,
                                const std::string &params) {
   udp::endpoint target_endpoint;
@@ -455,9 +440,6 @@ void BaseStation::send_command(const std::string &command,
   } // State Mutex Lock Released
 
   if (can_send) {
-    // std::cout << "[BASE STATION] Sending command '" << command << "' to
-    // connected rover at " << target_endpoint << std::endl; // Reduced
-    // verbosity
     CommandMessage cmd_msg(command, params,
                            station_id_); // Create message object
     if (message_manager_) {
@@ -512,7 +494,4 @@ void BaseStation::send_message(const Message &message,
 
   // Delegate sending to MessageManager, ensuring the recipient is specified.
   message_manager_->send_message(message, recipient);
-
-  // std::cout << "[BASE STATION] Sent message type '" << message.get_type() <<
-  // "' to " << recipient << "." << std::endl; // Reduced verbosity
 }

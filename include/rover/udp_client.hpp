@@ -5,7 +5,7 @@
 #include "configs.hpp" // For CLIENT_SOCK_BUF_SIZE, CLIENT_RETRY_DELAY
 
 #include <array>
-#include <atomic> // Added for running_ flag
+#include <atomic> // for running_ flag
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/socket_base.hpp> // For broadcast option
@@ -79,11 +79,10 @@ public:
    */
   void send_broadcast_data(
       const std::vector<uint8_t> &data, int broadcast_port,
-      const std::string &broadcast_address_str = "255.255.255.255");
+      const std::string &broadcast_address_str = "10.237.0.255");
 
   /**
    * @brief Sets the callback function to be invoked when data is received.
-   * **MODIFIED**: Callback now includes the sender's endpoint.
    * @param callback A function object `void(const std::vector<uint8_t>&
    * received_data, const udp::endpoint& sender_endpoint)`.
    */
@@ -113,7 +112,6 @@ private:
   /**
    * @brief Internal callback handler for completed `async_receive_from`
    * operations.
-   * **MODIFIED**: Passes sender endpoint to user callback.
    * @param error The error code associated with the completed operation.
    * @param bytes_transferred The number of bytes received.
    */

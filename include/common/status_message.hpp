@@ -16,7 +16,7 @@ namespace nm = nlohmann; // JSON namespace alias
 
 /**
  * @class StatusMessage
- * @brief Represents a status update message, typically sent from Rover to Base
+ * @brief Represents a status update message, sent from Rover to Base
  * Station.
  *
  * Contains a status level (OK, WARNING, ERROR, CRITICAL) and a descriptive

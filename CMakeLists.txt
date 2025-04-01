@@ -44,7 +44,7 @@ target_include_directories(common PUBLIC
     ${CMAKE_SOURCE_DIR}/include/common
 )
 
-target_link_libraries(common PUBLIC nlohmann_json::nlohmann_json Boost::system PRIVATE rover_lib base_lib Boost::program_options)
+target_link_libraries(common PUBLIC nlohmann_json::nlohmann_json Boost::system PRIVATE rover_lib base_lib)
 
 ### BASE STATION
 # Base station library
@@ -66,7 +66,7 @@ add_executable(base_station
     src/base/test_base_main.cpp
 )
 
-target_link_libraries(base_station PRIVATE base_lib Boost::program_options)
+target_link_libraries(base_station PRIVATE base_lib)
 
 ### ROVER
 # Rover library

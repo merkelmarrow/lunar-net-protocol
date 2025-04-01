@@ -268,14 +268,5 @@ private:
   // Timestamp for ACK cleanup (simple periodic full clear)
   std::chrono::steady_clock::time_point last_ack_cleanup_time_{};
 
-  // Constants defined in configs.hpp are used directly where needed,
-  // but listing key ones here for context within the class scope.
-  static constexpr uint8_t WINDOW_SIZE = 16; // Example constant usage
-  // static constexpr std::chrono::milliseconds NAK_DEBOUNCE_TIME{500};
-  // static constexpr std::chrono::milliseconds CLEANUP_INTERVAL{10000};
-  // static constexpr std::chrono::milliseconds SEQUENCE_RETAIN_TIME{30000};
-  // static constexpr int RELIABILITY_MAX_RETRIES = 5;
-  // static constexpr std::chrono::milliseconds RELIABILITY_BASE_TIMEOUT{5000};
-  // static constexpr std::chrono::milliseconds
-  // RELIABILITY_CHECK_INTERVAL{1000};
+  static constexpr uint8_t WINDOW_SIZE = 16;
 };

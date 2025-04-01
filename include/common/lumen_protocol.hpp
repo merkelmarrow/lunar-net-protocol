@@ -259,9 +259,4 @@ private:
       running_; ///< Flag indicating if the protocol handler is active.
 
   boost::asio::io_context &io_context_; ///< Reference to the main ASIO context.
-
-  // Sliding window size constant (Note: ReliabilityManager uses its own
-  // WINDOW_SIZE, consider unifying if appropriate) static constexpr uint8_t
-  // WINDOW_SIZE = 32; // Included but not directly used here,
-  // ReliabilityManager has its own.
 };
