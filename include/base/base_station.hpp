@@ -55,6 +55,8 @@ public:
   void send_raw_message(const Message &message, const udp::endpoint &endpoint);
   void send_command(const std::string &command, const std::string &params);
 
+  void send_message(const Message &message, const udp::endpoint &recipient);
+
 private:
   // Internal handler that decides whether to process internally or pass to
   // application handler

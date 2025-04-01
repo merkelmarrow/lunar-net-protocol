@@ -402,3 +402,21 @@ const udp::endpoint &Rover::get_base_endpoint() const {
   }
   return client_->get_base_endpoint();
 }
+
+void Rover::send_message(const Message &message) {
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (session_state_ != SessionState::ACTIVE) {
+      std::cout << "[ROVER] Cannot send message type " << message.get_type()
+                << ", session not active (current state: "
+                << static_cast<int>(session_state_) << ")" << std::endl;
+      return;
+    }
+  }
+  // Use the internal message manager to send the message.
+  // The message manager will handle sending it to the default base endpoint.
+  message_manager_->send_message(message);
+
+  std::cout << "[ROVER] Sent message of type: " << message.get_type()
+            << std::endl;
+}

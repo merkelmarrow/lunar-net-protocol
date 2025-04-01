@@ -402,3 +402,26 @@ void BaseStation::send_raw_message(const Message &message,
                                    const udp::endpoint &endpoint) {
   message_manager_->send_raw_message(message, endpoint);
 }
+
+void BaseStation::send_message(const Message &message,
+                               const udp::endpoint &recipient) {
+  if (!message_manager_) {
+    std::cerr << "[BASE STATION] Error: Message Manager not initialized. "
+                 "Cannot send message."
+              << std::endl;
+    return;
+  }
+  if (recipient.address().is_unspecified() || recipient.port() == 0) {
+    std::cerr << "[BASE STATION] Error: Invalid recipient endpoint provided "
+                 "for sending message type "
+              << message.get_type() << std::endl;
+    return;
+  }
+
+  // Use the internal message manager to send the message to the specified
+  // recipient
+  message_manager_->send_message(message, recipient);
+
+  std::cout << "[BASE STATION] Sent message type " << message.get_type()
+            << " to " << recipient << std::endl;
+}

@@ -1,176 +1,128 @@
+// src/base/test_base_main.cpp
 #include "base_station.hpp"
-#include "basic_message.hpp"
+#include "basic_message.hpp" // To send/receive basic messages
 #include "command_message.hpp"
-#include "status_message.hpp"
-#include "telemetry_message.hpp"
 #include <boost/asio.hpp>
-#include <boost/asio/signal_set.hpp>
+#include <chrono>
 #include <iostream>
-#include <sstream>
-#include <string>
-#include <thread>
+#include <memory>
+#include <thread> // For std::this_thread
 
-// Simple handler for Status/Telemetry (optional, can be merged)
-void handle_rover_updates(const std::string &rover_id,
-                          const std::map<std::string, double> &data) {
-  std::cout << "\n<-- [STATUS/TELEMETRY] From " << rover_id << " <--\n  Data: ";
-  for (const auto &entry : data) {
-    std::cout << entry.first << "=" << entry.second << "; ";
-  }
-  std::cout << "\n<-- End Update <--\n" << std::endl;
-  std::cout << "> Enter command (cmd <name> [params] | quit): " << std::flush;
-}
+const int LISTEN_PORT = 9001;                       // Port the base listens on
+const std::string BASE_STATION_ID = "test-base-01"; // ID for the base station
 
-// Simple generic handler for other messages
-void handle_generic_message(std::unique_ptr<Message> message,
-                            const udp::endpoint &sender) {
-  if (!message)
+// Forward declaration for the base station instance to use in the handler
+BaseStation *g_base_station = nullptr;
+
+// Custom application message handler for the Base Station
+void handle_base_message(std::unique_ptr<Message> message,
+                         const udp::endpoint &sender) {
+  if (!message) {
+    std::cout << "[BASE APP] Received null message pointer." << std::endl;
     return;
+  }
+  std::cout << "[BASE APP] Received message type: " << message->get_type()
+            << " from sender ID: " << message->get_sender()
+            << " at endpoint: " << sender << std::endl;
 
-  std::cout << "\n<-- [APP] Received Message from " << sender << " <--\n";
-  std::cout << "  Type:    " << message->get_type() << "\n";
-  std::cout << "  Sender:  " << message->get_sender() << "\n";
-  std::cout << "  Timestamp: "
-            << tp_utils::tp_to_string(message->get_timestamp()) << "\n";
-
+  // Example: Handle a BasicMessage received from the rover
   if (message->get_type() == BasicMessage::message_type()) {
     auto basic_msg = dynamic_cast<BasicMessage *>(message.get());
     if (basic_msg) {
-      std::cout << "  Content: " << basic_msg->get_content() << "\n";
-    }
-  } else if (message->get_type() == CommandMessage::message_type()) {
-    // Might receive commands from Rover (e.g., acknowledgements)
-    auto cmd_msg = dynamic_cast<CommandMessage *>(message.get());
-    if (cmd_msg) {
-      std::cout << "  Command: " << cmd_msg->get_command() << "\n";
-      std::cout << "  Params:  " << cmd_msg->get_params() << "\n";
-    }
-  }
-  // Avoid logging Status/Telemetry as 'unhandled' if specific handler exists
-  else if (message->get_type() != StatusMessage::message_type() &&
-           message->get_type() != TelemetryMessage::message_type()) {
-    std::cout << "  (Raw JSON): " << message->serialise() << "\n";
-  }
+      std::cout << "[BASE APP] Received BasicMessage content: "
+                << basic_msg->get_content() << std::endl;
 
-  std::cout << "<-- [APP] End Message <--\n" << std::endl;
-  std::cout << "> Enter command (cmd <name> [params] | quit): " << std::flush;
+      // Send a response back to the specific rover that sent the message
+      if (g_base_station) {
+        std::cout << "[BASE APP] Sending BasicMessage response back to "
+                  << sender << std::endl;
+        BasicMessage response_msg("Hello back from Base!", BASE_STATION_ID);
+        // Use send_raw_message to target the specific endpoint
+        // Or modify send_command if appropriate, but send_raw_message might be
+        // simpler for basic replies directly to the source endpoint
+        // Alternatively, ensure send_message targets the correct rover endpoint
+        // stored during handshake. Using send_message via MessageManager is
+        // preferred.
+        g_base_station->send_message(response_msg, sender);
+      }
+    }
+  } else if (message->get_type() == StatusMessage::message_type()) {
+    auto status_msg = dynamic_cast<StatusMessage *>(message.get());
+    if (status_msg) {
+      std::cout << "[BASE APP] Received Status: Level="
+                << static_cast<int>(status_msg->get_level())
+                << ", Desc=" << status_msg->get_description() << std::endl;
+    }
+  }
+  // Add handlers for other relevant message types (e.g., TelemetryMessage)
 }
 
-// Function to run in the input thread
-void input_loop(BaseStation &base_station,
-                boost::asio::io_context &io_context) {
-  std::string line;
-  while (std::getline(std::cin, line)) {
-    if (line == "quit") {
-      std::cout << "[Input] Quit command received. Stopping..." << std::endl;
-      base_station.stop();
-      io_context.stop(); // Stop the network thread
-      break;
-    }
-
-    std::stringstream ss(line);
-    std::string type;
-    ss >> type;
-
-    if (type == "cmd") {
-      std::string command_name;
-      std::string params;
-      ss >> command_name;       // Get command name
-      std::getline(ss, params); // Get the rest as parameters
-                                // Trim leading space
-      if (!params.empty() && params[0] == ' ') {
-        params = params.substr(1);
-      }
-
-      if (base_station.get_session_state() ==
-          BaseStation::SessionState::ACTIVE) {
-        std::cout << "[Input] Sending Command to "
-                  << base_station.get_connected_rover_id() << ": "
-                  << command_name << " Params: " << params << std::endl;
-        base_station.send_command(command_name, params);
-      } else {
-        std::cout << "[Input] Cannot send command, no active rover session."
-                  << std::endl;
-      }
-    } else if (!line.empty()) {
-      std::cout << "[Input] Unknown command type: '" << type
-                << "'. Use 'cmd' or 'quit'." << std::endl;
-    }
-    std::cout << "> Enter command (cmd <name> [params] | quit): " << std::flush;
+// Specific handler for Status/Telemetry if using set_status_callback
+void handle_status_telemetry(const std::string &rover_id,
+                             const std::map<std::string, double> &data) {
+  std::cout << "[BASE STATUS CB] Received Status/Telemetry from Rover ID: "
+            << rover_id << std::endl;
+  for (const auto &pair : data) {
+    std::cout << "  " << pair.first << ": " << pair.second << std::endl;
   }
-  std::cout << "[Input] Input loop finished." << std::endl;
 }
 
 int main() {
-  try {
-    boost::asio::io_context io_context;
-    int port = 9000; // Port for the base station
-    std::string station_id = "BaseStation-CLI";
+  boost::asio::io_context io_context;
+  std::cout << "[MAIN BASE] Starting Base Station Test Main..." << std::endl;
 
-    std::cout << "[MAIN] Creating BaseStation..." << std::endl;
-    BaseStation base_station(io_context, port, station_id);
+  // Create the BaseStation instance
+  BaseStation base(io_context, LISTEN_PORT, BASE_STATION_ID);
+  g_base_station = &base; // Set global pointer for handler access
 
-    // --- Setup Application Callbacks ---
-    base_station.set_status_callback(
-        handle_rover_updates); // Optional specific handler
-    base_station.set_application_message_handler(
-        handle_generic_message); // Generic handler
+  // --- Register Custom Handlers ---
+  // Register the general application-level handler
+  base.set_application_message_handler(handle_base_message);
+  std::cout << "[MAIN BASE] Registered application message handler."
+            << std::endl;
 
-    // --- Start the Base Station ---
-    base_station.start();
-    std::cout << "[MAIN] Base Station started on port " << port
-              << ". Waiting for rover connection..." << std::endl;
+  // Optionally, register the specific status/telemetry handler
+  base.set_status_callback(handle_status_telemetry);
+  std::cout << "[MAIN BASE] Registered status/telemetry callback." << std::endl;
 
-    // --- Graceful Shutdown Handling ---
-    boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
-    signals.async_wait(
-        [&](const boost::system::error_code &error, int signal_number) {
-          if (!error) {
-            std::cout << "\n[MAIN] Signal " << signal_number
-                      << " received. Shutting down..." << std::endl;
-            io_context.stop();
-            base_station.stop();
-          }
-        });
+  // --- Start Base Station ---
+  base.start(); // Starts listening for rover connections
+  std::cout << "[MAIN BASE] Base Station started. Listening on port "
+            << LISTEN_PORT << "." << std::endl;
 
-    // --- Run io_context in a separate thread ---
-    std::thread io_thread([&]() {
-      try {
-        std::cout << "[MAIN] Network thread (io_context) started." << std::endl;
-        io_context.run();
-        std::cout << "[MAIN] Network thread (io_context) finished."
-                  << std::endl;
-      } catch (const std::exception &e) {
-        std::cerr << "[ERROR] Exception in network thread: " << e.what()
-                  << std::endl;
-        io_context.stop();
-        base_station.stop();
-      }
-    });
-
-    // --- Start input thread ---
-    std::cout << "[MAIN] Starting input thread..." << std::endl;
-    std::thread input_thread(input_loop, std::ref(base_station),
-                             std::ref(io_context));
-
-    // --- Wait for threads ---
-    std::cout << "[MAIN] Waiting for threads to complete..." << std::endl;
-    std::cout << "> Enter command (cmd <name> [params] | quit): " << std::flush;
-
-    if (input_thread.joinable()) {
-      input_thread.join();
+  // --- Run io_context in a separate thread ---
+  std::thread io_thread([&io_context]() {
+    try {
+      io_context.run();
+    } catch (const std::exception &e) {
+      std::cerr << "[ERROR] io_context exception: " << e.what() << std::endl;
     }
-    std::cout << "[MAIN] Input thread joined." << std::endl;
+    std::cout << "[MAIN BASE] io_context thread finished." << std::endl;
+  });
 
-    if (io_thread.joinable()) {
-      io_thread.join();
-    }
-    std::cout << "[MAIN] Network thread joined." << std::endl;
-    std::cout << "[MAIN] Base Station finished." << std::endl;
+  // --- Keep Running ---
+  std::cout << "[MAIN BASE] Base Station running. Waiting for connections and "
+               "messages. Press Ctrl+C to exit."
+            << std::endl;
+  // Keep the main thread alive indefinitely, or use a signal handler for clean
+  // shutdown
+  io_thread.join(); // In this simple case, join will block until io_context is
+                    // stopped
 
-  } catch (const std::exception &e) {
-    std::cerr << "[ERROR] Exception in main: " << e.what() << std::endl;
-    return 1;
+  // --- Stop Base Station and Cleanup (will likely need Ctrl+C to reach here)
+  // ---
+  std::cout << "[MAIN BASE] Stopping Base Station..." << std::endl;
+  base.stop();
+
+  // io_context might already be stopped if io_thread finished, but ensure it
+  if (!io_context.stopped()) {
+    io_context.stop();
   }
+  // Ensure thread is joined if it wasn't already
+  if (io_thread.joinable()) {
+    io_thread.join();
+  }
+
+  std::cout << "[MAIN BASE] Base Station Test Main finished." << std::endl;
   return 0;
 }
