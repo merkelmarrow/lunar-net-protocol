@@ -59,6 +59,7 @@ public:
   // send a command message (usually for session management internally, but can
   // be used)
   void send_command(const std::string &command, const std::string &params);
+  const udp::endpoint &get_base_endpoint() const;
 
 private:
   // Internal handler that decides whether to process internally or pass to

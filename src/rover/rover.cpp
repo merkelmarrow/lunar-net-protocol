@@ -395,3 +395,10 @@ void Rover::send_raw_message(const Message &message,
                              const udp::endpoint &endpoint) {
   message_manager_->send_raw_message(message, endpoint);
 }
+
+const udp::endpoint &Rover::get_base_endpoint() const {
+  if (!client_) {
+    throw std::runtime_error("Client not initialized in Rover");
+  }
+  return client_->get_base_endpoint();
+}
