@@ -291,64 +291,77 @@ void Rover::handle_handshake_timer() {
 }
 
 // Called internally when SESSION_ACCEPT command is received
+// Called internally when SESSION_ACCEPT command is received
 void Rover::handle_session_accept() {
-  std::cout << "[ROVER INTERNAL] Processing SESSION_ACCEPT" << std::endl;
+  std::cout << "[ROVER INTERNAL] Processing SESSION_ACCEPT" << std::endl; //
 
-  {
-    std::lock_guard<std::mutex> lock(state_mutex_);
+  bool state_updated = false; // Flag to track if state changed
+
+  {                                                 // Lock scope starts
+    std::lock_guard<std::mutex> lock(state_mutex_); // Lock acquired
 
     // verify we're in the correct state
-    if (session_state_ != SessionState::HANDSHAKE_INIT) {
+    if (session_state_ != SessionState::HANDSHAKE_INIT) { //
       std::cout << "[ROVER INTERNAL] Ignoring SESSION_ACCEPT, not in handshake "
                    "init state"
-                << std::endl;
-      return;
+                << std::endl; //
+      return;                 // Exit early if state is wrong
     }
 
     // update state
-    session_state_ = SessionState::HANDSHAKE_ACCEPT;
+    session_state_ = SessionState::HANDSHAKE_ACCEPT; //
+    state_updated = true;                            // Mark state as updated
+  } // Lock released here
+
+  // Only proceed if the state was correctly updated
+  if (state_updated) {
+    // send SESSION_CONFIRM
+    send_command("SESSION_CONFIRM", rover_id_); //
+
+    // ** FIX: Cancel the handshake timer now **
+    // We've received ACCEPT and sent CONFIRM, no need for the timer to retry.
+    handshake_timer_.cancel(); //
+    std::cout << "[ROVER INTERNAL] Handshake timer cancelled after sending "
+                 "SESSION_CONFIRM."
+              << std::endl; // Optional log
   }
-
-  // send SESSION_CONFIRM
-  send_command("SESSION_CONFIRM", rover_id_);
-
-  // Don't immediately set ACTIVE here, wait for SESSION_ESTABLISHED
-  // {
-  //   std::lock_guard<std::mutex> lock(state_mutex_);
-  //   session_state_ = SessionState::ACTIVE; // Changed: Wait for confirmation
-  // }
-  // std::cout << "[ROVER INTERNAL] Session established with base station" <<
-  // std::endl;
-
-  // Reset handshake retry count (prematurely, reset on established)
-  // handshake_retry_count_ = 0;
-
-  // start the status timer (prematurely, start on established)
-  // handle_status_timer();
+  // NOTE: Do NOT set state to ACTIVE here. Wait for SESSION_ESTABLISHED.
+  // NOTE: Do NOT start status_timer_ here. Wait for session to be ACTIVE.
 }
 
 // Called internally when SESSION_ESTABLISHED command is received
 void Rover::handle_session_established() {
-  std::cout << "[ROVER INTERNAL] Processing SESSION_ESTABLISHED" << std::endl;
-  std::lock_guard<std::mutex> lock(state_mutex_);
-  if (session_state_ !=
-      SessionState::ACTIVE) { // Only transition if not already active
-    if (session_state_ != SessionState::HANDSHAKE_ACCEPT) {
-      std::cout << "[ROVER INTERNAL] Warning: Received SESSION_ESTABLISHED in "
-                   "unexpected state: "
-                << static_cast<int>(session_state_) << std::endl;
+  std::cout << "[ROVER INTERNAL] Processing SESSION_ESTABLISHED"
+            << std::endl; //
+  bool needs_status_timer_start =
+      false; // Flag to start timer after lock release
+
+  {                                                 // Lock scope starts
+    std::lock_guard<std::mutex> lock(state_mutex_); // Lock acquired
+    if (session_state_ !=
+        SessionState::ACTIVE) { // Only transition if not already active
+      if (session_state_ != SessionState::HANDSHAKE_ACCEPT) { //
+        std::cout << "[ROVER INTERNAL] Warning: Received SESSION_ESTABLISHED "
+                     "in unexpected state: "
+                  << static_cast<int>(session_state_) << std::endl; //
+      }
+      session_state_ = SessionState::ACTIVE;                       //
+      std::cout << "[ROVER INTERNAL] Session ACTIVE" << std::endl; //
+
+      // Reset retry counter now that session is fully confirmed
+      handshake_retry_count_ = 0; //
+
+      // Cancel handshake timer as it's no longer needed
+      handshake_timer_.cancel(); //
+
+      // Set the flag to start the status timer *after* releasing the lock
+      needs_status_timer_start = true; //
     }
-    session_state_ = SessionState::ACTIVE;
-    std::cout << "[ROVER INTERNAL] Session ACTIVE" << std::endl;
+  } // Lock released here
 
-    // Reset retry counter now that session is fully confirmed
-    handshake_retry_count_ = 0;
-
-    // Cancel handshake timer as it's no longer needed
-    handshake_timer_.cancel();
-
-    // Start the status timer to send status periodically ONLY when active
-    handle_status_timer();
+  // Start the status timer ONLY when active and *after* the lock is released
+  if (needs_status_timer_start) { //
+    handle_status_timer();        // <<-- MOVED OUTSIDE LOCK SCOPE
   }
 }
 
