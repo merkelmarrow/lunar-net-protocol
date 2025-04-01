@@ -1,85 +1,103 @@
+// src/base/base_station.cpp
+
 #include "base_station.hpp"
 
-#include "basic_message.hpp" // Include BasicMessage if needed
+// Include necessary message types used in this class
 #include "command_message.hpp"
+#include "message_manager.hpp"
 #include "status_message.hpp"
 #include "telemetry_message.hpp"
+// #include "basic_message.hpp" // Only include if BasicMessage is handled here
 
 #include <iostream>
+#include <map>    // For map in status/telemetry handling
+#include <memory> // For std::unique_ptr, std::move
+#include <string> // For std::string comparison etc.
 
 BaseStation::BaseStation(boost::asio::io_context &io_context, int port,
                          const std::string &station_id)
-    : io_context_(io_context), session_state_(SessionState::INACTIVE),
+    : io_context_(io_context),
+      session_state_(SessionState::INACTIVE), // Start inactive
       station_id_(station_id) {
-  // initialize UDP server
+
+  // Instantiate the underlying layers in order: Transport -> Protocol ->
+  // Message Manager
   server_ = std::make_unique<UdpServer>(io_context, port);
-
-  // initialize the protocol layer - base station sends ACKs and expects NAKs
-  protocol_ = std::make_unique<LumenProtocol>(io_context, *server_);
-
-  // initialize the message manager with server reference
+  protocol_ =
+      std::make_unique<LumenProtocol>(io_context, *server_); // Pass server ref
   message_manager_ = std::make_unique<MessageManager>(
-      io_context, *protocol_, station_id, server_.get());
+      io_context, *protocol_, station_id_,
+      server_.get()); // Pass protocol, id, server ref
 
   std::cout << "[BASE STATION] Initialized on port " << port
             << " with ID: " << station_id << std::endl;
 }
 
-BaseStation::~BaseStation() { stop(); }
+BaseStation::~BaseStation() {
+  stop(); // Ensure resources are released
+}
 
 void BaseStation::start() {
-  // start the server
-  server_->start();
+  if (message_manager_)
+    message_manager_->start();
+  if (protocol_)
+    protocol_->start();
+  if (server_)
+    server_->start(); // Start server last (innermost layer)
 
-  // start the protocol layer
-  protocol_->start();
-
-  // start the message manager
-  message_manager_->start();
-
-  // set up message callback to route messages
-  message_manager_->set_message_callback(
-      [this](std::unique_ptr<Message> message, const udp::endpoint &sender) {
-        route_message(std::move(message), sender); // Use the router function
-      });
+  // Set up the callback chain: MessageManager receives deserialized messages
+  // and passes them up to BaseStation's route_message method.
+  if (message_manager_) {
+    message_manager_->set_message_callback(
+        [this](std::unique_ptr<Message> message, const udp::endpoint &sender) {
+          route_message(std::move(message), sender);
+        });
+  } else {
+    std::cerr << "[BASE STATION] Error: Cannot set message callback, "
+                 "MessageManager is null."
+              << std::endl;
+  }
 
   std::cout << "[BASE STATION] Started and listening for connections"
             << std::endl;
 }
 
 void BaseStation::stop() {
-  // stop in reverse order of initialization
-  if (message_manager_)
-    message_manager_->stop();
-  if (protocol_)
-    protocol_->stop();
+  // Stop layers in reverse order of initialization/start
   if (server_)
     server_->stop();
+  if (protocol_)
+    protocol_->stop();
+  if (message_manager_)
+    message_manager_->stop();
 
-  // update state
+  // Reset session state
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     session_state_ = SessionState::INACTIVE;
     connected_rover_id_.clear();
-    rover_endpoint_ = udp::endpoint(); // Clear endpoint
+    rover_endpoint_ = udp::endpoint(); // Clear stored endpoint
   }
 
   std::cout << "[BASE STATION] Stopped" << std::endl;
 }
 
-// New method to set the application-level message handler
+// Set the handler for general application messages (non-internal)
 void BaseStation::set_application_message_handler(
     ApplicationMessageHandler handler) {
   std::lock_guard<std::mutex> lock(handler_mutex_);
   application_message_handler_ = std::move(handler);
-  std::cout << "[BASE STATION] Application message handler set." << std::endl;
+  std::cout << "[BASE STATION] Application message handler registered."
+            << std::endl;
 }
 
-// Keep set_status_callback if desired for specific handling
+// Set a specific handler for Status/Telemetry messages
 void BaseStation::set_status_callback(StatusCallback callback) {
-  std::lock_guard<std::mutex> lock(callback_mutex_);
+  std::lock_guard<std::mutex> lock(
+      callback_mutex_); // Protects status_callback_
   status_callback_ = std::move(callback);
-  std::cout << "[BASE STATION] Status/Telemetry callback set." << std::endl;
+  std::cout << "[BASE STATION] Status/Telemetry callback registered."
+            << std::endl;
 }
 
 BaseStation::SessionState BaseStation::get_session_state() const {
@@ -97,83 +115,99 @@ udp::endpoint BaseStation::get_rover_endpoint() const {
   return rover_endpoint_;
 }
 
-// Renamed/Refactored: Routes message to internal handler or application handler
+// Central router for messages received from MessageManager
 void BaseStation::route_message(std::unique_ptr<Message> message,
                                 const udp::endpoint &sender) {
-  if (!message)
+  if (!message) {
+    std::cerr << "[BASE STATION] Error: Received null message pointer in "
+                 "route_message."
+              << std::endl;
     return;
+  }
 
   std::string msg_type = message->get_type();
   std::string sender_id = message->get_sender();
 
-  std::cout << "[BASE INTERNAL] Routing message type: " << msg_type
-            << " from: " << sender_id << " at: " << sender << std::endl;
+  // std::cout << "[BASE INTERNAL] Routing message type: " << msg_type << "
+  // from: " << sender_id << " at: " << sender << std::endl; // Reduced
+  // verbosity
 
-  // --- Internal Handling Section ---
+  // --- Internal Handling ---
+  // Certain messages MUST be handled internally, primarily session management.
 
-  // 1. Session Management Commands MUST be handled internally first
+  // 1. Handle Session Management Commands
   if (msg_type == CommandMessage::message_type()) {
-    auto cmd_msg = dynamic_cast<CommandMessage *>(message.get());
+    auto *cmd_msg = dynamic_cast<CommandMessage *>(message.get());
     if (cmd_msg) {
-      std::string command = cmd_msg->get_command();
+      const std::string &command = cmd_msg->get_command();
+      // SESSION_INIT and SESSION_CONFIRM are critical internal commands.
       if (command == "SESSION_INIT" || command == "SESSION_CONFIRM") {
         handle_internal_command(cmd_msg, sender);
-        return; // Don't pass session commands to application handler
+        // Session commands are fully handled internally, do not pass further.
+        return;
       }
     }
   }
 
-  // 2. Verify Session State for non-session-init messages
-  // Allow SESSION_INIT even if inactive. For others, require ACTIVE session
-  // from the correct rover.
+  // 2. Session/Sender Verification for non-session-init messages
+  // Ensure the message is from the expected rover and the session is active (or
+  // initializing for CONFIRM).
   bool allow_message = false;
-  if (msg_type == CommandMessage::message_type() &&
-      dynamic_cast<CommandMessage *>(message.get())->get_command() ==
-          "SESSION_INIT") {
-    allow_message = true; // Allow SESSION_INIT anytime
-  } else {
+  {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    if (session_state_ == SessionState::ACTIVE &&
-        connected_rover_id_ == sender_id && rover_endpoint_ == sender) {
-      allow_message = true;
-    } else if (session_state_ == SessionState::HANDSHAKE_ACCEPT &&
-               msg_type == CommandMessage::message_type() &&
-               dynamic_cast<CommandMessage *>(message.get())->get_command() ==
-                   "SESSION_CONFIRM" &&
-               connected_rover_id_ == sender_id && rover_endpoint_ == sender) {
-      allow_message = true; // Allow SESSION_CONFIRM during handshake
-    } else {
-      std::cout << "[BASE INTERNAL] Ignoring message type " << msg_type
-                << " from " << sender_id << " at " << sender
-                << ". Session State: " << static_cast<int>(session_state_)
-                << ", Expected Rover: " << connected_rover_id_
-                << ", Expected Endpoint: " << rover_endpoint_ << std::endl;
+    if (session_state_ == SessionState::ACTIVE) {
+      // In ACTIVE state, message must be from the connected rover's ID and
+      // endpoint.
+      allow_message =
+          (connected_rover_id_ == sender_id && rover_endpoint_ == sender);
+    } else if (session_state_ == SessionState::HANDSHAKE_ACCEPT) {
+      // During handshake accept state, only allow SESSION_CONFIRM from the
+      // expected rover.
+      if (msg_type == CommandMessage::message_type()) {
+        auto *cmd_msg = dynamic_cast<CommandMessage *>(message.get());
+        allow_message =
+            (cmd_msg && cmd_msg->get_command() == "SESSION_CONFIRM" &&
+             connected_rover_id_ == sender_id && rover_endpoint_ == sender);
+      }
     }
+    // Note: SESSION_INIT bypasses this check as it was handled earlier.
   }
 
   if (!allow_message) {
-    return; // Ignore message if session/sender doesn't match (unless it's
-            // SESSION_INIT)
+    std::cout << "[BASE INTERNAL] Ignoring message type '" << msg_type
+              << "' from " << sender_id << " at " << sender
+              << ". Reason: Session inactive or mismatch with expected "
+                 "rover/endpoint."
+              << std::endl;
+    return; // Ignore message
   }
 
-  // 3. Handle Status/Telemetry internally if status_callback_ is set
-  if (msg_type == StatusMessage::message_type()) {
-    handle_internal_status(dynamic_cast<StatusMessage *>(message.get()),
-                           sender);
-    // Decide if you ALSO want to pass it to the generic application handler
-    // below return; // Uncomment if status_callback is exclusive
-  } else if (msg_type == TelemetryMessage::message_type()) {
-    handle_internal_telemetry(dynamic_cast<TelemetryMessage *>(message.get()),
-                              sender);
-    // Decide if you ALSO want to pass it to the generic application handler
-    // below
-    // return; // Uncomment if status_callback is exclusive
+  // 3. Optional Internal Handling for Status/Telemetry via dedicated callback
+  StatusCallback status_cb_copy; // Copy callback for thread safety
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    status_cb_copy = status_callback_;
   }
 
-  // --- Application Handler Section ---
+  if (status_cb_copy) {
+    if (msg_type == StatusMessage::message_type()) {
+      handle_internal_status(dynamic_cast<StatusMessage *>(message.get()),
+                             status_cb_copy);
+      // Decide whether status messages handled by status_callback_ should ALSO
+      // go to the general handler. return; // Uncomment to make
+      // status_callback_ exclusive
+    } else if (msg_type == TelemetryMessage::message_type()) {
+      handle_internal_telemetry(dynamic_cast<TelemetryMessage *>(message.get()),
+                                status_cb_copy);
+      // Decide whether telemetry messages handled by status_callback_ should
+      // ALSO go to the general handler. return; // Uncomment to make
+      // status_callback_ exclusive
+    }
+  }
 
-  // Pass all other messages (or Status/Telemetry if not exclusively handled
-  // above) to the application handler if it's set.
+  // --- Application Handling ---
+  // Pass any remaining messages (or those not exclusively handled above)
+  // to the general application message handler, if registered.
   ApplicationMessageHandler handler_copy;
   {
     std::lock_guard<std::mutex> lock(handler_mutex_);
@@ -181,247 +215,304 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
   }
 
   if (handler_copy) {
-    std::cout << "[BASE INTERNAL] Passing message type " << msg_type
-              << " to application handler." << std::endl;
-    // Use post to avoid blocking the network thread
-    boost::asio::post(io_context_,
-                      [handler = std::move(handler_copy),
-                       msg = std::move(message),
-                       ep = sender]() mutable { handler(std::move(msg), ep); });
+    // std::cout << "[BASE INTERNAL] Passing message type '" << msg_type << "'
+    // to application handler." << std::endl; // Reduced verbosity Use
+    // boost::asio::post to ensure the handler runs on the io_context thread
+    // without blocking the current network processing thread.
+    boost::asio::post(io_context_, [handler = std::move(handler_copy),
+                                    msg = std::move(message),
+                                    ep = sender]() mutable {
+      try {
+        handler(std::move(msg), ep);
+      } catch (const std::exception &e) {
+        std::cerr
+            << "[ERROR] BaseStation: Exception in application message handler: "
+            << e.what() << std::endl;
+      }
+    });
   } else {
-    // Only log if it wasn't a status/telemetry message (which might be handled
-    // by status_callback_)
-    if (msg_type != StatusMessage::message_type() &&
-        msg_type != TelemetryMessage::message_type()) {
-      std::cout
-          << "[BASE INTERNAL] No application handler set for message type: "
-          << msg_type << std::endl;
+    // Log if a message wasn't handled by any callback (and wasn't expected to
+    // be handled internally). Avoid logging for Status/Telemetry if
+    // status_callback_ exists but wasn't exclusive.
+    bool was_status_telemetry = (msg_type == StatusMessage::message_type() ||
+                                 msg_type == TelemetryMessage::message_type());
+    if (!status_cb_copy || !was_status_telemetry) {
+      std::cout << "[BASE INTERNAL] No application handler registered for "
+                   "message type '"
+                << msg_type << "' from " << sender_id << "." << std::endl;
     }
   }
 }
 
-// Internal handler for session commands
+// Handles internal session-related commands
 void BaseStation::handle_internal_command(CommandMessage *cmd_msg,
                                           const udp::endpoint &sender) {
   if (!cmd_msg)
     return;
-  std::string command = cmd_msg->get_command();
-  std::string params = cmd_msg->get_params(); // Often the rover_id
-  std::string sender_id = cmd_msg->get_sender();
+  const std::string &command = cmd_msg->get_command();
+  const std::string &params =
+      cmd_msg->get_params(); // Typically the rover_id for session commands
+  const std::string &sender_id =
+      cmd_msg->get_sender(); // Get sender ID from message object
 
-  std::cout << "[BASE INTERNAL] Handling command: " << command << " from "
-            << sender_id << std::endl;
+  std::cout << "[BASE INTERNAL] Handling command: '" << command
+            << "' from sender ID: '" << sender_id << "' at " << sender
+            << std::endl;
 
   if (command == "SESSION_INIT") {
+    // Pass the sender_id from the message, not the params.
     handle_session_init(sender_id, sender);
   } else if (command == "SESSION_CONFIRM") {
+    // Pass the sender_id from the message.
     handle_session_confirm(sender_id, sender);
   }
-  // Add other internal commands if needed
+  // Add other internal commands here if necessary
 }
 
-// Internal handler for status messages (calls status_callback_)
+// Internal processor for StatusMessages, invokes the specific status_callback_
 void BaseStation::handle_internal_status(StatusMessage *status_msg,
-                                         const udp::endpoint &sender) {
-  if (!status_msg)
+                                         const StatusCallback &callback) {
+  if (!status_msg || !callback)
     return;
+
   std::string sender_id = status_msg->get_sender();
+  // std::cout << "[BASE INTERNAL] Processing Status from " << sender_id << ":
+  // Level=" << static_cast<int>(status_msg->get_level()) << ", Desc=" <<
+  // status_msg->get_description() << std::endl; // Reduced verbosity
 
-  std::cout << "[BASE INTERNAL] Processing Status from " << sender_id
-            << ": Level=" << static_cast<int>(status_msg->get_level())
-            << ", Desc=" << status_msg->get_description() << std::endl;
+  // Convert status info to the map format expected by the callback
+  std::map<std::string, double> status_data;
+  status_data["status_level"] = static_cast<double>(status_msg->get_level());
+  // Note: Description is string, map is double. Cannot directly include
+  // description in this callback format.
 
-  StatusCallback callback_copy;
-  {
-    std::lock_guard<std::mutex> lock(callback_mutex_);
-    callback_copy = status_callback_;
-  }
-  if (callback_copy) {
-    std::map<std::string, double> status_data = {
-        {"status_level", static_cast<double>(status_msg->get_level())}
-        // Add description if needed, though map expects doubles
-        // {"description", status_msg->get_description()} // Needs map<string,
-        // variant> or similar
-    };
-    // Use post to avoid blocking network thread
-    boost::asio::post(io_context_,
-                      [cb = std::move(callback_copy), id = sender_id,
-                       data = std::move(status_data)]() { cb(id, data); });
-  }
+  // Post the callback execution to the io_context thread pool
+  boost::asio::post(io_context_, [cb = callback, id = sender_id,
+                                  data = std::move(status_data)]() {
+    try {
+      cb(id, data);
+    } catch (const std::exception &e) {
+      std::cerr << "[ERROR] BaseStation: Exception in status callback: "
+                << e.what() << std::endl;
+    }
+  });
 }
 
-// Internal handler for telemetry messages (calls status_callback_)
+// Internal processor for TelemetryMessages, invokes the specific
+// status_callback_
 void BaseStation::handle_internal_telemetry(TelemetryMessage *telemetry_msg,
-                                            const udp::endpoint &sender) {
-  if (!telemetry_msg)
+                                            const StatusCallback &callback) {
+  if (!telemetry_msg || !callback)
     return;
+
   std::string sender_id = telemetry_msg->get_sender();
-  const auto &readings = telemetry_msg->get_readings();
+  const auto &readings =
+      telemetry_msg->get_readings(); // Get telemetry data map
 
-  std::cout << "[BASE INTERNAL] Processing Telemetry from " << sender_id << " ("
-            << readings.size() << " readings)" << std::endl;
+  // std::cout << "[BASE INTERNAL] Processing Telemetry from " << sender_id << "
+  // (" << readings.size() << " readings)" << std::endl; // Reduced verbosity
 
-  StatusCallback callback_copy;
-  {
-    std::lock_guard<std::mutex> lock(callback_mutex_);
-    callback_copy = status_callback_;
-  }
-  if (callback_copy) {
-    // Use post to avoid blocking network thread
-    boost::asio::post(io_context_,
-                      [cb = std::move(callback_copy), id = sender_id,
-                       data = readings]() { cb(id, data); });
-  }
+  // Post the callback execution to the io_context thread pool
+  boost::asio::post(io_context_, [cb = callback, id = sender_id,
+                                  data = readings]() { // Pass readings map
+                                                       // directly
+    try {
+      cb(id, data);
+    } catch (const std::exception &e) {
+      std::cerr
+          << "[ERROR] BaseStation: Exception in telemetry (status) callback: "
+          << e.what() << std::endl;
+    }
+  });
 }
 
-// --- Session Management Logic (Remains Internal) ---
+// --- Session Management Implementation ---
 
 void BaseStation::handle_session_init(const std::string &rover_id,
                                       const udp::endpoint &sender) {
-  std::cout << "[BASE INTERNAL] Received SESSION_INIT from rover: " << rover_id
-            << " at " << sender << std::endl; // [cite: 1]
+  std::cout << "[BASE INTERNAL] Received SESSION_INIT from rover ID: '"
+            << rover_id << "' at " << sender << std::endl;
 
-  bool send_accept = false; // Flag to indicate if we should send SESSION_ACCEPT
+  bool send_accept = false; // Flag to send SESSION_ACCEPT outside the lock
 
-  {
-    std::lock_guard<std::mutex> lock(state_mutex_); // [cite: 1]
+  { // State Mutex Lock Scope
+    std::lock_guard<std::mutex> lock(state_mutex_);
 
-    // If already in a session with a *different* rover, reject. Allow reconnect
-    // from same rover.
+    // Check for existing session collision
     if (session_state_ != SessionState::INACTIVE &&
-        connected_rover_id_ != rover_id) { // [cite: 1]
-      std::cout << "[BASE INTERNAL] Rejecting new session from " << rover_id
-                << ", already connected to " << connected_rover_id_
-                << std::endl; // [cite: 1]
-      // Optionally send a REJECT command (requires defining it)
-      return; // [cite: 1]
+        connected_rover_id_ != rover_id) {
+      std::cout << "[BASE INTERNAL] Rejecting SESSION_INIT from '" << rover_id
+                << "'. Already in session with '" << connected_rover_id_ << "'."
+                << std::endl;
+      // Consider sending a SESSION_REJECT command if defined.
+      return; // Reject new session attempt
     }
 
-    // If reconnecting from the same rover, reset state
-    if (connected_rover_id_ == rover_id &&
-        rover_endpoint_ != sender) { // [cite: 1]
-      std::cout << "[BASE INTERNAL] Rover " << rover_id
-                << " reconnected from new endpoint " << sender
-                << std::endl;                     // [cite: 1]
-    } else if (connected_rover_id_ == rover_id) { // [cite: 1]
-      std::cout << "[BASE INTERNAL] Rover " << rover_id
-                << " re-initiating session." << std::endl; // [cite: 1]
+    // Handle cases: New connection, reconnection from same rover (maybe new
+    // endpoint), re-initiation
+    if (connected_rover_id_ == rover_id) {
+      if (rover_endpoint_ != sender) {
+        std::cout << "[BASE INTERNAL] Rover '" << rover_id
+                  << "' reconnected from new endpoint: " << sender << " (was "
+                  << rover_endpoint_ << ")." << std::endl;
+      } else {
+        std::cout << "[BASE INTERNAL] Rover '" << rover_id
+                  << "' re-initiating session from same endpoint." << std::endl;
+      }
+    } else {
+      std::cout << "[BASE INTERNAL] New session initiation from '" << rover_id
+                << "'." << std::endl;
     }
 
-    // Update state and store rover details
-    session_state_ = SessionState::HANDSHAKE_INIT; // [cite: 1]
-    connected_rover_id_ = rover_id;                // [cite: 1]
-    rover_endpoint_ = sender; // Store the sender's endpoint [cite: 1]
-    std::cout << "[BASE INTERNAL] Rover endpoint set to: " << rover_endpoint_
-              << std::endl; // [cite: 1]
+    // Update state and store initiating rover's details
+    // Move to HANDSHAKE_ACCEPT state immediately before sending accept
+    session_state_ = SessionState::HANDSHAKE_ACCEPT;
+    connected_rover_id_ = rover_id;
+    rover_endpoint_ = sender; // Store the endpoint we received INIT from
+    send_accept = true;       // Mark that we should send SESSION_ACCEPT
 
-    // ** FIX: Update state to HANDSHAKE_ACCEPT *before* sending the command **
-    session_state_ = SessionState::HANDSHAKE_ACCEPT; // [cite: 1]
-    send_accept = true;                              // Set flag to send command
+    std::cout << "[BASE INTERNAL] State set to HANDSHAKE_ACCEPT. Stored rover "
+                 "endpoint: "
+              << rover_endpoint_ << std::endl;
 
-  } // Mutex lock released here
+  } // State Mutex Lock Released
 
-  // Send SESSION_ACCEPT back to the rover's endpoint if flagged
+  // Send SESSION_ACCEPT back to the initiating rover if flagged
   if (send_accept) {
-    // The state check inside send_command will now pass
-    send_command(
-        "SESSION_ACCEPT",
-        station_id_); // Send base station ID back maybe? Or just ack. [cite: 1]
-
-    // Log after attempting to send
-    std::cout << "[BASE INTERNAL] Sent SESSION_ACCEPT to rover: " << rover_id
-              << std::endl; // [cite: 1]
+    // Send base station ID in params? Or just a simple accept? Sending ID for
+    // now.
+    send_command("SESSION_ACCEPT", station_id_);
+    std::cout << "[BASE INTERNAL] Sent SESSION_ACCEPT to rover '" << rover_id
+              << "' at " << sender << "." << std::endl;
   }
 }
 
 void BaseStation::handle_session_confirm(const std::string &rover_id,
                                          const udp::endpoint &sender) {
-  std::cout << "[BASE INTERNAL] Received SESSION_CONFIRM from rover: "
-            << rover_id << std::endl;
+  std::cout << "[BASE INTERNAL] Received SESSION_CONFIRM from rover ID: '"
+            << rover_id << "' at " << sender << std::endl;
 
-  {
+  bool send_established = false; // Flag to send SESSION_ESTABLISHED
+
+  { // State Mutex Lock Scope
     std::lock_guard<std::mutex> lock(state_mutex_);
 
-    // Verify this is the rover we're handshaking with and it's the right state
+    // Verify CONFIRM is from the expected rover during the correct handshake
+    // phase.
     if (session_state_ != SessionState::HANDSHAKE_ACCEPT ||
         connected_rover_id_ != rover_id || rover_endpoint_ != sender) {
-      std::cout
-          << "[BASE INTERNAL] Ignoring SESSION_CONFIRM from unexpected rover ("
-          << rover_id << " at " << sender << ")"
-          << " or in wrong state (" << static_cast<int>(session_state_) << ")."
-          << std::endl;
-      return;
+      std::cout << "[BASE INTERNAL] Ignoring SESSION_CONFIRM from '" << rover_id
+                << "' at " << sender << ". Reason: State ("
+                << static_cast<int>(session_state_)
+                << ") or rover mismatch (Expected: '" << connected_rover_id_
+                << "' at " << rover_endpoint_ << ")." << std::endl;
+      return; // Ignore invalid confirmation
     }
 
-    // Update state to ACTIVE
+    // Handshake successful, transition to ACTIVE state.
     session_state_ = SessionState::ACTIVE;
+    send_established = true; // Mark that we should send SESSION_ESTABLISHED
+
+    std::cout << "[BASE INTERNAL] Session ACTIVE with rover: '"
+              << connected_rover_id_ << "' at " << rover_endpoint_ << std::endl;
+
+  } // State Mutex Lock Released
+
+  // Send final SESSION_ESTABLISHED confirmation if flagged
+  if (send_established) {
+    // Send base station ID in params?
+    send_command("SESSION_ESTABLISHED", station_id_);
+    std::cout << "[BASE INTERNAL] Sent SESSION_ESTABLISHED to rover '"
+              << rover_id << "'." << std::endl;
   }
-
-  std::cout << "[BASE INTERNAL] Session ACTIVE with rover: " << rover_id
-            << std::endl;
-
-  // Send a final confirmation back to the rover
-  send_command("SESSION_ESTABLISHED", station_id_);
-  std::cout << "[BASE INTERNAL] Sent SESSION_ESTABLISHED to rover: " << rover_id
-            << std::endl;
 }
 
-// Send command TO THE CONNECTED ROVER
+// Sends a command message TO THE CURRENTLY CONNECTED ROVER.
 void BaseStation::send_command(const std::string &command,
                                const std::string &params) {
-  CommandMessage cmd_msg(command, params, station_id_);
   udp::endpoint target_endpoint;
-  bool is_active = false;
+  bool can_send = false;
 
-  {
+  { // State Mutex Lock Scope
     std::lock_guard<std::mutex> lock(state_mutex_);
-    // Allow sending SESSION_ACCEPT even if not fully active yet
-    if (session_state_ == SessionState::HANDSHAKE_ACCEPT ||
-        session_state_ == SessionState::ACTIVE) {
+    // Commands can usually only be sent when session is ACTIVE.
+    // Allow sending session responses (ACCEPT, ESTABLISHED) during handshake.
+    if (session_state_ == SessionState::ACTIVE ||
+        (session_state_ == SessionState::HANDSHAKE_ACCEPT &&
+         command == "SESSION_ACCEPT") ||
+        (session_state_ == SessionState::ACTIVE &&
+         command == "SESSION_ESTABLISHED") // Technically ACTIVE when sending
+                                           // ESTABLISHED
+    ) {
       if (rover_endpoint_.address().is_unspecified()) {
-        std::cerr << "[BASE STATION] Cannot send command '" << command
-                  << "', rover endpoint unknown." << std::endl;
-        return;
+        std::cerr << "[BASE STATION] Error: Cannot send command '" << command
+                  << "'. Rover endpoint is unknown." << std::endl;
+      } else {
+        target_endpoint = rover_endpoint_;
+        can_send = true;
       }
-      target_endpoint = rover_endpoint_;
-      is_active = true; // Technically active enough to send response/command
     }
-  } // Mutex released
+  } // State Mutex Lock Released
 
-  if (is_active) {
-    std::cout << "[BASE STATION] Sending command '" << command << "' to "
-              << target_endpoint << std::endl;
-    message_manager_->send_message(cmd_msg, target_endpoint);
+  if (can_send) {
+    // std::cout << "[BASE STATION] Sending command '" << command << "' to
+    // connected rover at " << target_endpoint << std::endl; // Reduced
+    // verbosity
+    CommandMessage cmd_msg(command, params,
+                           station_id_); // Create message object
+    if (message_manager_) {
+      // Delegate sending to MessageManager, specifying the target endpoint
+      message_manager_->send_message(cmd_msg, target_endpoint);
+    } else {
+      std::cerr << "[BASE STATION] Error: Cannot send command '" << command
+                << "', MessageManager is null." << std::endl;
+    }
   } else {
     std::cerr << "[BASE STATION] Cannot send command '" << command
-              << "', session not active or initializing." << std::endl;
+              << "'. Session not in appropriate state ("
+              << static_cast<int>(get_session_state()) << ")." << std::endl;
   }
 }
 
+// Sends a message bypassing LumenProtocol (sends raw JSON via UDP).
 void BaseStation::send_raw_message(const Message &message,
-                                   const udp::endpoint &endpoint) {
-  message_manager_->send_raw_message(message, endpoint);
-}
-
-void BaseStation::send_message(const Message &message,
-                               const udp::endpoint &recipient) {
+                                   const udp::endpoint &recipient) {
   if (!message_manager_) {
-    std::cerr << "[BASE STATION] Error: Message Manager not initialized. "
-                 "Cannot send message."
+    std::cerr << "[BASE STATION] Error: Cannot send raw message, "
+                 "MessageManager is null."
               << std::endl;
     return;
   }
   if (recipient.address().is_unspecified() || recipient.port() == 0) {
+    std::cerr << "[BASE STATION] Error: Invalid recipient endpoint for "
+                 "send_raw_message."
+              << std::endl;
+    return;
+  }
+  // Delegate raw sending to MessageManager
+  message_manager_->send_raw_message(message, recipient);
+}
+
+// Sends a standard application message via the full protocol stack to a
+// specific recipient.
+void BaseStation::send_message(const Message &message,
+                               const udp::endpoint &recipient) {
+  if (!message_manager_) {
+    std::cerr
+        << "[BASE STATION] Error: Cannot send message, MessageManager is null."
+        << std::endl;
+    return;
+  }
+  if (recipient.address().is_unspecified() || recipient.port() == 0) {
     std::cerr << "[BASE STATION] Error: Invalid recipient endpoint provided "
-                 "for sending message type "
-              << message.get_type() << std::endl;
+                 "for sending message type '"
+              << message.get_type() << "'." << std::endl;
     return;
   }
 
-  // Use the internal message manager to send the message to the specified
-  // recipient
+  // Delegate sending to MessageManager, ensuring the recipient is specified.
   message_manager_->send_message(message, recipient);
 
-  std::cout << "[BASE STATION] Sent message type " << message.get_type()
-            << " to " << recipient << std::endl;
+  // std::cout << "[BASE STATION] Sent message type '" << message.get_type() <<
+  // "' to " << recipient << "." << std::endl; // Reduced verbosity
 }
