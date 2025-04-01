@@ -83,7 +83,52 @@ void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
                                           const LumenHeader &header,
                                           const udp::endpoint &sender) {
   try {
-    // convert binary to string
+    // Check if this might be a raw JSON message (special case)
+    if (header.get_sequence() == 0 && !payload.empty() && payload[0] == '{') {
+      // Convert binary to string
+      std::string json_str = binary_to_string(payload);
+
+      // Pretty print the JSON if it's valid
+      if (Message::is_valid_json(json_str)) {
+        std::string pretty_json;
+        try {
+          pretty_json = Message::pretty_print(json_str);
+          std::cout << "[MESSAGE MANAGER] Received raw JSON message: \n"
+                    << pretty_json << std::endl;
+        } catch (const std::exception &e) {
+          std::cout << "[MESSAGE MANAGER] Received raw JSON message (failed to "
+                       "pretty print): "
+                    << (json_str.length() > 100
+                            ? json_str.substr(0, 100) + "..."
+                            : json_str)
+                    << std::endl;
+        }
+
+        // Attempt to parse as a Message
+        auto message = Message::deserialise(json_str);
+
+        // Call the callback if it's been set
+        std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>
+            callback_copy;
+        {
+          std::lock_guard<std::mutex> lock(callback_mutex_);
+          callback_copy = message_callback_;
+        }
+
+        if (callback_copy) {
+          callback_copy(std::move(message), sender);
+        }
+      } else {
+        std::cerr << "[ERROR] Received raw JSON message is not valid: "
+                  << (json_str.length() > 100 ? json_str.substr(0, 100) + "..."
+                                              : json_str)
+                  << std::endl;
+      }
+
+      return;
+    }
+
+    // Regular message handling continues...
     std::string json_str = binary_to_string(payload);
 
     // check if it's a valid json msg

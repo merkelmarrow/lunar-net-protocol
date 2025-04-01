@@ -173,6 +173,40 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
   if (!running_)
     return;
 
+  // Check if this is a raw JSON message (doesn't start with STX marker)
+  if (!data.empty() && data[0] != LUMEN_STX) {
+    // Check if it looks like JSON (starts with '{')
+    if (data.size() > 1 && data[0] == '{') {
+      std::cout << "[LUMEN] Detected raw JSON message without protocol headers"
+                << std::endl;
+
+      // Convert binary data to string
+      std::string json_str(data.begin(), data.end());
+
+      // Create a special header for raw JSON
+      LumenHeader header(LumenHeader::MessageType::DATA,
+                         LumenHeader::Priority::MEDIUM,
+                         0, // Special sequence number 0 for raw messages
+                         generate_timestamp(), data.size());
+
+      // Deliver directly to application layer
+      std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
+                         const udp::endpoint &)>
+          callback_copy;
+      {
+        std::lock_guard<std::mutex> lock(callback_mutex_);
+        callback_copy = message_callback_;
+      }
+
+      if (callback_copy) {
+        callback_copy(data, header, endpoint);
+      }
+
+      return;
+    }
+  }
+
+  // Normal Lumen packet processing continues here...
   std::string endpoint_key = get_endpoint_key(endpoint);
 
   // Store the endpoint mapping
@@ -184,7 +218,6 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
   // add data to frame buffer
   {
     std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
-    // append the received data to the endpoint-specific buffer
     frame_buffers_[endpoint_key].insert(frame_buffers_[endpoint_key].end(),
                                         data.begin(), data.end());
   }
