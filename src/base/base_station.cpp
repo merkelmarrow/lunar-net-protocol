@@ -88,38 +88,42 @@ void BaseStation::handle_message(std::unique_ptr<Message> message,
   std::cout << "[BASE STATION] Received message type: " << msg_type
             << " from: " << sender_id << " at: " << sender << std::endl;
 
-  // handle based on message type
+  // Handle session management commands first
   if (msg_type == CommandMessage::message_type()) {
     auto cmd_msg = dynamic_cast<CommandMessage *>(message.get());
     std::string command = cmd_msg->get_command();
     std::string params = cmd_msg->get_params();
 
-    // handle session management commands
     if (command == "SESSION_INIT") {
       handle_session_init(sender_id, sender);
+      return;
     } else if (command == "SESSION_CONFIRM") {
       handle_session_confirm(sender_id, sender);
+      return;
     }
-  } else if (msg_type == StatusMessage::message_type()) {
-    auto status_msg = dynamic_cast<StatusMessage *>(message.get());
+  }
 
-    // only accept status messages from connected rover during active session
-    {
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      if (session_state_ != SessionState::ACTIVE ||
-          connected_rover_id_ != sender_id) {
-        std::cout
-            << "[BASE STATION] Ignoring status message from unconnected rover"
-            << std::endl;
-        return;
-      }
+  // Verify session state for all other messages
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (session_state_ != SessionState::ACTIVE ||
+        connected_rover_id_ != sender_id || rover_endpoint_ != sender) {
+
+      std::cout << "[BASE STATION] Ignoring message from unconnected rover: "
+                << sender_id << " at " << sender << std::endl;
+      return;
     }
+  }
+
+  // Process other message types
+  if (msg_type == StatusMessage::message_type()) {
+    auto status_msg = dynamic_cast<StatusMessage *>(message.get());
 
     std::cout << "[BASE STATION] Received status: "
               << static_cast<int>(status_msg->get_level()) << " - "
               << status_msg->get_description() << std::endl;
 
-    // call status callback if set
+    // Call status callback if set
     StatusCallback callback_copy;
     {
       std::lock_guard<std::mutex> lock(callback_mutex_);
@@ -134,22 +138,11 @@ void BaseStation::handle_message(std::unique_ptr<Message> message,
   } else if (msg_type == TelemetryMessage::message_type()) {
     auto telemetry_msg = dynamic_cast<TelemetryMessage *>(message.get());
 
-    // only accept telemetry from connected rover during active session
-    {
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      if (session_state_ != SessionState::ACTIVE ||
-          connected_rover_id_ != sender_id) {
-        std::cout << "[BASE STATION] Ignoring telemetry from unconnected rover"
-                  << std::endl;
-        return;
-      }
-    }
-
     const auto &readings = telemetry_msg->get_readings();
     std::cout << "[BASE STATION] Received telemetry from " << sender_id
               << std::endl;
 
-    // call status callback if set
+    // Call status callback if set
     StatusCallback callback_copy;
     {
       std::lock_guard<std::mutex> lock(callback_mutex_);

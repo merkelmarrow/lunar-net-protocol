@@ -82,7 +82,7 @@ private:
   std::string get_endpoint_key(const udp::endpoint &endpoint) const;
 
   // Check for sequence gap and send NAK if needed (rover only)
-  void check_sequence_gaps(uint8_t received_seq, const udp::endpoint &endpoint);
+  void check_sequence_gaps(const udp::endpoint &endpoint);
 
   // references to lower layers
   ProtocolMode mode_;
