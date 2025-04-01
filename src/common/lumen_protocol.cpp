@@ -172,79 +172,102 @@ uint8_t LumenProtocol::get_current_sequence() const {
 void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
                                     const udp::endpoint &endpoint) {
   if (!running_)
-    return;
+    return; //
 
-  // Check if this is a raw JSON message (doesn't start with STX marker)
-  if (!data.empty() && data[0] != LUMEN_STX) {
+  // Check if this is potentially a raw JSON message (doesn't start with STX
+  // marker)
+  if (!data.empty() && data[0] != LUMEN_STX) { //
     // Check if it looks like JSON (starts with '{')
-    if (data.size() > 1 && data[0] == '{') {
+    if (data[0] == '{') { //
       std::cout << "[LUMEN] Detected raw JSON message without protocol headers"
-                << std::endl;
+                << std::endl; //
 
-      // Convert binary data to string for logging
-      std::string json_str(data.begin(), data.end());
+      // Convert binary data to string
+      std::string json_str(data.begin(), data.end()); //
 
-      // Pretty print if valid JSON
-      if (Message::is_valid_json(json_str)) {
-        try {
-          std::string pretty_json = Message::pretty_print(json_str);
-          std::cout << "[MESSAGE MANAGER] Received raw JSON message: \n"
-                    << pretty_json << std::endl;
-        } catch (...) {
-          // Fall back to simple output
-          std::cout << "[MESSAGE MANAGER] Raw JSON: "
-                    << (json_str.length() > 50 ? json_str.substr(0, 50) + "..."
-                                               : json_str)
-                    << std::endl;
-        }
-      }
-
-      // Process the JSON message directly
+      // Attempt to deserialize the raw JSON
       try {
-        if (Message::is_valid_json(json_str)) {
-          auto message = Message::deserialise(json_str);
+        if (Message::is_valid_json(json_str)) {          //
+          auto message = Message::deserialise(json_str); //
+          std::cout << "[MESSAGE MANAGER] Received raw JSON message: \n"
+                    << Message::pretty_print(json_str)
+                    << std::endl; // Pretty print
 
-          // Call the message callback directly, bypassing lumen protocol
-          MessageManager *msg_manager = nullptr;
-          if (mode_ == ProtocolMode::BASE_STATION && server_) {
-            // Get reference to message manager through server
-            // This requires adding a method to get the message manager from
-            // server
-          } else if (mode_ == ProtocolMode::ROVER && client_) {
-            // Get reference to message manager through client
+          // Get a copy of the callback set by MessageManager
+          std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
+                             const udp::endpoint &)>
+              lumen_msg_callback_copy;
+          {                                                    //
+            std::lock_guard<std::mutex> lock(callback_mutex_); //
+            lumen_msg_callback_copy = message_callback_;       //
           }
 
-          if (msg_manager) {
-            msg_manager->process_raw_json_message(std::move(message), endpoint);
+          // ** FIX: Call the MessageManager's callback directly **
+          // We bypass the normal LUMEN payload extraction, so call the
+          // callback that expects the payload, header, and sender.
+          if (lumen_msg_callback_copy) { //
+            // Create a dummy header since there isn't one for raw JSON
+            LumenHeader dummy_header(
+                LumenHeader::MessageType::DATA, // Default type
+                LumenHeader::Priority::MEDIUM,  // Default prio
+                0,                              // Dummy sequence
+                generate_timestamp(),           // Current timestamp
+                0); // Zero payload length (header only)
+
+            // Convert message back to binary payload temporarily for the
+            // callback OR - Modify the callback system later to handle raw
+            // Messages directly For now, convert the string back to
+            // vector<uint8_t>
+            std::vector<uint8_t> raw_payload(json_str.begin(), json_str.end());
+
+            // Call the callback usually called by process_complete_packet
+            lumen_msg_callback_copy(raw_payload, dummy_header, endpoint); //
           }
+          // Successfully processed raw JSON, return to avoid LUMEN framing
+          // logic
+          return; //
+        } else {
+          std::cerr
+              << "[LUMEN] Received data looks like JSON but failed validation."
+              << std::endl;
         }
-      } catch (const std::exception &e) {
+      } catch (const std::exception &e) { //
         std::cerr << "[ERROR] Failed to process raw JSON: " << e.what()
-                  << std::endl;
+                  << std::endl; //
       }
-
-      return;
+      // If JSON parsing failed or it wasn't valid JSON, let it fall through
+      // potentially to be discarded by LUMEN STX check later, or handle error
+      // differently. For now, we let it fall through. Consider adding specific
+      // error handling if needed.
+    } else {
+      // Data doesn't start with STX or '{'. Likely invalid/corrupt. Log or
+      // ignore.
+      std::cerr << "[LUMEN] Received UDP data without STX or starting '{'. "
+                   "Discarding "
+                << data.size() << " bytes from " << endpoint << std::endl;
+      return; // Discard invalid data
     }
   }
 
-  // Normal Lumen packet processing continues here...
-  std::string endpoint_key = get_endpoint_key(endpoint);
+  // ** Normal Lumen packet processing continues here if data started with STX
+  // **
+  std::string endpoint_key = get_endpoint_key(endpoint); //
 
   // Store the endpoint mapping
-  {
-    std::lock_guard<std::mutex> lock(endpoint_mutex_);
-    endpoint_map_[endpoint_key] = endpoint;
+  {                                                    //
+    std::lock_guard<std::mutex> lock(endpoint_mutex_); //
+    endpoint_map_[endpoint_key] = endpoint;            //
   }
 
   // add data to frame buffer
-  {
-    std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
+  {                                                         //
+    std::lock_guard<std::mutex> lock(frame_buffers_mutex_); //
     frame_buffers_[endpoint_key].insert(frame_buffers_[endpoint_key].end(),
-                                        data.begin(), data.end());
+                                        data.begin(), data.end()); //
   }
 
   // process frame buffer to extract complete packets
-  process_frame_buffer(endpoint_key, endpoint);
+  process_frame_buffer(endpoint_key, endpoint); //
 }
 
 void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
