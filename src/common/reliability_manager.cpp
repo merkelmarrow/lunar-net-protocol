@@ -125,13 +125,13 @@ void ReliabilityManager::process_nak(uint8_t seq) {
     }
 
     if (callback_copy) {
-      // Reset retransmission timer to avoid immediate retries
-      it->second.sent_time = std::chrono::steady_clock::now();
+      std::cout << "[RELIABILITY] NAK received, immediately retransmitting "
+                   "packet with seq: "
+                << static_cast<int>(seq) << std::endl;
 
-      // Retransmit the packet
+      // Immediately retransmit - this is the ONLY way base station should
+      // retransmit
       callback_copy(it->second.packet, it->second.recipient);
-      std::cout << "[RELIABILITY] Retransmitting packet with seq: "
-                << static_cast<int>(seq) << " (NAK)" << std::endl;
     }
   } else {
     std::cout << "[RELIABILITY] Received NAK for unknown sequence: "
@@ -244,17 +244,15 @@ ReliabilityManager::get_packets_to_retransmit() {
     auto &info = it->second;
     uint8_t seq = it->first;
 
-    // Skip packets we've already ACKed (for base station)
-    if (role_ == Role::BASE_STATION &&
-        has_acked_sequence(seq, info.recipient)) {
-      std::cout << "[RELIABILITY] Removing packet with seq: "
-                << static_cast<int>(seq) << " that we've already ACKed"
-                << std::endl;
-      it = sent_packets_.erase(it);
+    // BASE STATION MODE: No automatic retransmission - only retransmit via NAK
+    if (role_ == Role::BASE_STATION) {
+      // Just keep packets in sent_packets_ for potential future NAK requests
+      // But never automatically retransmit them
+      ++it;
       continue;
     }
 
-    // Rest of the function remains the same
+    // ROVER MODE: Use traditional timeout-based retransmission
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         now - info.sent_time);
 
