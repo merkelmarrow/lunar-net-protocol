@@ -649,6 +649,8 @@ void Rover::send_command(const std::string &command,
   udp::endpoint base_ep;
   try {
     base_ep = get_base_endpoint(); // Send session commands only to base
+    message_manager_->send_message(cmd_msg, base_ep);
+
   } catch (const std::runtime_error &e) {
     std::cerr << "[ROVER] Error getting base endpoint for send_command '"
               << command << "': " << e.what() << std::endl;
