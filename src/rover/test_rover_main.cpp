@@ -17,6 +17,17 @@ const std::string BASE_HOST = "10.237.0.201";
 const int BASE_PORT = 9001; // Must match the port Base Station is listening on
 const std::string ROVER_ID = "TestRover01";
 
+// A helper function to parse command parameters from a string.
+std::vector<std::string> parseParameters(const std::string &paramStr) {
+  std::vector<std::string> params;
+  std::istringstream iss(paramStr);
+  std::string token;
+  while (iss >> token) {
+      params.push_back(token);
+  }
+  return params;
+}
+
 // --- Callback Handlers ---
 
 // Handles general messages (like commands) received from the Base Station
@@ -33,9 +44,36 @@ void handle_rover_app_message(std::unique_ptr<Message> message,
       std::cout << "  Command: " << cmd_msg->get_command() << std::endl;
       std::cout << "  Params:  " << cmd_msg->get_params() << std::endl;
       // Add logic here to act on the command
+
+      // Parse parameters if needed
+      std::vector<std::string> paramList = parseParameters(params);
+
+      if (command == "MOVE_FORWARD") {
+        if (!paramList.empty()) {
+          int distance = std::stoi(paramList[0]);
+          std::cout << "[ROVER APP] Executing MOVE_FORWARD for "
+                    << distance << " units." << std::endl;
+          //rover movement logic here.
+        } else {
+          std::cout << "[ROVER APP] MOVE_FORWARD command missing distance parameter."
+                    << std::endl;
+        }
+      }
+      else if (command == "STOP") {
+        std::cout << "[ROVER APP] Executing STOP command." << std::endl;
+        // logic to stop the rover.
+      }
+      else if (command == "COLLECT_SAMPLE") {
+        std::cout << "[ROVER APP] Executing COLLECT_SAMPLE command." << std::endl;
+        // logic to simulate sample collection.
+      }
     }
   }
-  // Add handling for other expected application-specific message types here
+  else {
+    // Handle other message types (Telemetry, Status, Basic, etc.)
+    std::cout << "[ROVER APP] Received non-command message of type: "
+              << message->get_type() << std::endl;
+  }
 }
 
 int main() {
