@@ -30,6 +30,7 @@ void run_cli(BaseStation &baseStation, std::atomic<bool> &cliRunning) {
     while (cliRunning && std::getline(std::cin, line)) {
         if (line.empty())
             continue;
+
         auto tokens = split(line);
         std::string command = tokens[0];
 
@@ -69,43 +70,56 @@ void run_cli(BaseStation &baseStation, std::atomic<bool> &cliRunning) {
 }
 
 int main() {
-    try {
+    try 
+    {
         // Create the io_context and BaseStation instance.
         boost::asio::io_context io_context;
-        const int BASE_PORT = 9001;
+
         const std::string BASE_ID = "BaseStation01";
 
-        BaseStation baseStation(io_context, BASE_PORT, BASE_ID);
+        BaseStation baseStation[0](io_context, 9001, BASE_ID);
+        BaseStation baseStation[1](io_context, 9002, BASE_ID);
+        BaseStation baseStation[2](io_context, 9003, BASE_ID);
+        BaseStation baseStation[3](io_context, 9004, BASE_ID);
 
         // Optionally, register a handler to process responses from the rover.
-        baseStation.set_application_message_handler([](std::unique_ptr<Message> msg, const udp::endpoint &sender) {
+        baseStation[i].set_application_message_handler([](std::unique_ptr<Message> msg, const udp::endpoint &sender) 
+        {
             std::cout << "[BASE APP] Received message from " << sender
-                      << ", Type: " << msg->get_type() << std::endl;
-            // Additional processing can be added here.
+                      << ", Type: " << msg->get_type() << std::endl
+                      << "Message: " << msg->serialise() << std::endl;
+                      
         });
 
-        // Start the base station.
-        baseStation.start();
-        std::cout << "[BASE CLI] Base Station started on port " << BASE_PORT 
-                  << ". You can now issue commands via CLI." << std::endl;
+        for(int i = 0; i < 4; i++)
+        {
+            // Start the base station.
+            baseStation[i].start();
 
-        // Launch the CLI in a separate thread.
-        std::atomic<bool> cliRunning{true};
-        std::thread cliThread(run_cli, std::ref(baseStation), std::ref(cliRunning));
+            std::cout << "[BASE CLI] Base Station started on port " << BASE_PORT 
+                    << ". You can now issue commands via CLI." << std::endl;
 
-        // Run the io_context to process network events.
-        io_context.run();
+            // Launch the CLI in a separate thread.
+            std::atomic<bool> cliRunning{true};
+            std::thread cliThread(run_cli, std::ref(baseStation[i]), std::ref(cliRunning));
 
-        // When the io_context stops, signal the CLI to exit.
-        cliRunning = false;
-        if (cliThread.joinable())
-            cliThread.join();
+            // Run the io_context to process network events.
+            io_context.run();
 
-        baseStation.stop();
-        std::cout << "[BASE CLI] Base Station stopped cleanly." << std::endl;
-    } catch (const std::exception &ex) {
+            // When the io_context stops, signal the CLI to exit.
+            cliRunning = false;
+            if (cliThread.joinable())
+                cliThread.join();
+
+            baseStation[i].stop();
+            std::cout << "[BASE CLI] Base Station stopped cleanly." << std::endl;
+        }
+    } 
+    catch (const std::exception &ex) 
+    {
         std::cerr << "[BASE CLI] Exception: " << ex.what() << std::endl;
         return 1;
     }
+
     return 0;
 }
