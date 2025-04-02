@@ -552,7 +552,9 @@ void Rover::handle_session_accept() {
   if (state_updated) {
     send_command("SESSION_CONFIRM", rover_id_);
     std::cout << "[ROVER INTERNAL] Sent SESSION_CONFIRM." << std::endl;
-    // Handshake timer continues running, waiting for ESTABLISHED or timeout
+    // Cancel the timer now that we've sent confirm, wait for ESTABLISHED
+    boost::system::error_code ec;
+    handshake_timer_.cancel(ec);
   }
 }
 
@@ -650,7 +652,6 @@ void Rover::send_command(const std::string &command,
   try {
     base_ep = get_base_endpoint(); // Send session commands only to base
     message_manager_->send_message(cmd_msg, base_ep);
-
   } catch (const std::runtime_error &e) {
     std::cerr << "[ROVER] Error getting base endpoint for send_command '"
               << command << "': " << e.what() << std::endl;
