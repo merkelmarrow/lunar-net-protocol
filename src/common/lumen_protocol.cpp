@@ -1,14 +1,17 @@
 // src/common/lumen_protocol.cpp
 
 #include "lumen_protocol.hpp"
+#include "basic_message.hpp"
 #include "configs.hpp"
 #include "lumen_header.hpp"
 #include "lumen_packet.hpp"
-#include "message_manager.hpp" // Included for Message::deserialise, Message::is_valid_json
+#include "message.hpp"
+#include "message_manager.hpp"
 #include "reliability_manager.hpp"
 
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <sstream>
 
 LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
@@ -129,8 +132,13 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
     }
     target_endpoint = recipient;
   } else {
-    // Rover sends messages to its registered base station by default
-    target_endpoint = client_->get_base_endpoint();
+    // Rover sends messages to its registered base station by default,
+    // unless a specific recipient is provided (for rover-to-rover)
+    if (!recipient.address().is_unspecified()) {
+      target_endpoint = recipient;
+    } else {
+      target_endpoint = client_->get_base_endpoint();
+    }
   }
 
   // ReliabilityManager only needs to track packets that require acknowledgment
@@ -171,91 +179,133 @@ uint8_t LumenProtocol::get_current_sequence() const {
 
 void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
                                     const udp::endpoint &endpoint) {
-  if (!running_)
+  if (!running_ || data.empty()) // Ignore empty packets
     return;
 
-  // --- Handling for Raw JSON (without LUMEN headers) ---
-  // This allows for easy communication between the rovers
-  if (!data.empty() && data[0] != LUMEN_STX) {
-    // Check if it looks like a JSON object
-    if (data[0] == '{') {
-      std::cout << "[LUMEN] Detected potential raw JSON message without "
-                   "protocol headers from "
-                << endpoint << std::endl;
-      std::string json_str(data.begin(), data.end());
+  // check if it's a lumen packet
+  if (data[0] == LUMEN_STX) {
+    // Potentially a standard LUMEN packet, add to buffer for processing
+    std::string endpoint_key = get_endpoint_key(endpoint);
+    // Store the actual endpoint object associated with this key
+    {
+      std::lock_guard<std::mutex> lock(endpoint_mutex_);
+      endpoint_map_[endpoint_key] = endpoint;
+    }
+    // Append received data to the per-endpoint buffer
+    {
+      std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
+      frame_buffers_[endpoint_key].insert(frame_buffers_[endpoint_key].end(),
+                                          data.begin(), data.end());
+    }
+    // Attempt to process complete LUMEN packets from the buffer
+    process_frame_buffer(endpoint_key, endpoint);
+    return; // Done processing as LUMEN packet
+  }
+  // If it's not a lumen packet, check if it's raw json
+  else if (data[0] == '{') {
+    std::cout << "[LUMEN] Detected potential raw JSON message from " << endpoint
+              << std::endl;
+    std::string json_str(data.begin(), data.end());
 
-      try {
-        // Attempt to deserialize directly using the Message factory
-        if (Message::is_valid_json(json_str)) { // Check validity first
-          auto message = Message::deserialise(json_str);
-          std::cout << "[LUMEN] Successfully deserialized raw JSON message."
-                    << std::endl;
+    try {
+      // Use Message factory directly ONLY IF valid JSON
+      if (Message::is_valid_json(json_str)) {
+        auto message = Message::deserialise(json_str); // Try deserializing
+        if (message) {
+          std::cout
+              << "[LUMEN] Successfully deserialized raw JSON message type: "
+              << message->get_type() << std::endl;
 
-          // Get the callback registered by MessageManager
+          // Repackage and send to MessageManager via the existing callback
+          // mechanism. Create a dummy header
+          LumenHeader dummy_header(
+              LumenHeader::MessageType::DATA, LumenHeader::Priority::MEDIUM, 0,
+              generate_timestamp(), static_cast<uint16_t>(data.size()));
+
+          // Get the callback registered BY MessageManager (which points to
+          // MessageManager::handle_lumen_message)
           std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
                              const udp::endpoint &)>
-              lumen_msg_callback_copy;
+              msg_mgr_callback;
           {
             std::lock_guard<std::mutex> lock(callback_mutex_);
-            lumen_msg_callback_copy = message_callback_;
+            msg_mgr_callback = message_callback_;
           }
 
-          // Since this bypasses normal LUMEN processing, directly invoke the
-          // callback expected by MessageManager. A dummy header is created as
-          // the callback signature requires it.
-          if (lumen_msg_callback_copy) {
-            LumenHeader dummy_header(
-                LumenHeader::MessageType::DATA, // Assume DATA type
-                LumenHeader::Priority::MEDIUM,  // Assume MEDIUM priority
-                0,                              // Sequence not applicable
-                generate_timestamp(),
-                static_cast<uint16_t>(
-                    data.size())); // Use raw data size for length
-
-            // Pass the original raw binary data as payload
-            lumen_msg_callback_copy(data, dummy_header, endpoint);
+          if (msg_mgr_callback) {
+            // Pass the original raw binary data (which is valid JSON) as
+            // payload
+            msg_mgr_callback(data, dummy_header, endpoint);
+          } else {
+            std::cerr << "[LUMEN] Warning: No MessageManager callback set for "
+                         "raw JSON."
+                      << std::endl;
           }
-          // Successfully processed as raw JSON, exit the handler.
-          return;
+          return; // Successfully processed as raw JSON
         } else {
-          std::cerr << "[LUMEN] Received data from " << endpoint
-                    << " starting with '{' but failed JSON validation."
-                    << std::endl;
+          std::cerr << "[LUMEN] Valid JSON detected but failed "
+                       "Message::deserialise from "
+                    << endpoint << std::endl;
         }
-      } catch (const std::exception &e) {
-        std::cerr << "[ERROR] Failed to process raw JSON from " << endpoint
-                  << ": " << e.what() << std::endl;
+      } else {
+        std::cerr << "[LUMEN] Received data from " << endpoint
+                  << " starting with '{' but failed JSON validation."
+                  << std::endl;
       }
-      // If JSON processing failed, let it fall through to be discarded below.
-    } else {
-      // Data doesn't start with STX or '{'. Discard as invalid/unrecognized.
-      std::cerr << "[LUMEN] Received UDP data from " << endpoint
-                << " without STX or starting '{'. Discarding " << data.size()
-                << " bytes." << std::endl;
-      return;
+    } catch (const std::exception &e) {
+      std::cerr << "[ERROR] Failed to process raw JSON from " << endpoint
+                << ": " << e.what() << std::endl;
     }
-  }
-  // --- End Raw JSON Handling ---
-
-  // --- Normal LUMEN Packet Processing ---
-  std::string endpoint_key = get_endpoint_key(endpoint);
-
-  // Store the actual endpoint object associated with this key, useful when
-  // multiple rovers send data
-  {
-    std::lock_guard<std::mutex> lock(endpoint_mutex_);
-    endpoint_map_[endpoint_key] = endpoint;
+    // If JSON processing failed or wasn't valid, fall through to be treated as
+    // basic content below.
   }
 
-  // Append received data to the per-endpoint buffer for potential reassembly
-  {
-    std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
-    frame_buffers_[endpoint_key].insert(frame_buffers_[endpoint_key].end(),
-                                        data.begin(), data.end());
-  }
+  // fallback is treating the data as a raw string
+  std::cout << "[LUMEN] Received non-Lumen, non-JSON data from " << endpoint
+            << ". Wrapping in BasicMessage." << std::endl;
 
-  // Attempt to process complete LUMEN packets from the buffer
-  process_frame_buffer(endpoint_key, endpoint);
+  try {
+    // Convert raw data to string content
+    std::string content_string(data.begin(), data.end());
+    std::string unknown_sender_id = "Unknown:" + get_endpoint_key(endpoint);
+
+    BasicMessage basic_msg_obj(content_string, unknown_sender_id);
+
+    // Serialize this new BasicMessage back into JSON format
+    std::string json_payload_str = basic_msg_obj.serialise();
+    // Convert the JSON string into a binary payload
+    std::vector<uint8_t> binary_payload(json_payload_str.begin(),
+                                        json_payload_str.end());
+
+    // Create a dummy LumenHeader
+    LumenHeader dummy_header(
+        LumenHeader::MessageType::DATA, LumenHeader::Priority::MEDIUM,
+        0, // Sequence number is not applicable
+        generate_timestamp(), static_cast<uint16_t>(binary_payload.size()));
+
+    // Get the callback registered BY MessageManager (points to
+    // MessageManager::handle_lumen_message)
+    std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
+                       const udp::endpoint &)>
+        msg_mgr_callback;
+    {
+      std::lock_guard<std::mutex> lock(callback_mutex_);
+      msg_mgr_callback = message_callback_;
+    }
+
+    // Call MessageManager's handler with the repackaged JSON payload
+    if (msg_mgr_callback) {
+      msg_mgr_callback(binary_payload, dummy_header, endpoint);
+    } else {
+      std::cerr << "[LUMEN] Warning: No MessageManager callback set to handle "
+                   "wrapped BasicMessage."
+                << std::endl;
+    }
+
+  } catch (const std::exception &e) {
+    std::cerr << "[LUMEN] Error wrapping raw data into BasicMessage from "
+              << endpoint << ": " << e.what() << std::endl;
+  }
 }
 
 void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
@@ -274,13 +324,46 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
     // LumenPacket::from_bytes checks for STX, valid header, length, CRC, and
     // ETX.
     auto packet_opt = LumenPacket::from_bytes(buffer);
+
+    // If not enough data or packet is invalid (STX, ETX, CRC error etc.)
     if (!packet_opt) {
-      break;
+      size_t stx_pos = std::string::npos; // Use std::string::npos for clarity
+      for (size_t i = 0; i < buffer.size(); ++i) {
+        if (buffer[i] == LUMEN_STX) {
+          stx_pos = i;
+          break;
+        }
+      }
+
+      if (stx_pos != std::string::npos && stx_pos > 0) {
+        // Found STX later in the buffer, discard bytes before it
+        std::cerr << "[LUMEN] Discarding " << stx_pos
+                  << " bytes from buffer for " << endpoint_key
+                  << " before potential STX." << std::endl;
+        buffer.erase(buffer.begin(), buffer.begin() + stx_pos);
+        // Try parsing again in the next loop iteration
+        continue;
+      } else if (stx_pos == std::string::npos) {
+        // No STX found at all, clear buffer if large or wait for more data if
+        // small
+        if (buffer.size() > MAX_FRAME_BUFFER_SIZE / 2) { // Heuristic
+          std::cerr << "[LUMEN] No STX found in large buffer for "
+                    << endpoint_key << ". Clearing " << buffer.size()
+                    << " bytes." << std::endl;
+          buffer.clear();
+        }
+        // If buffer is small and no STX, just break and wait for more data
+        break;
+      } else {
+        // STX is at buffer[0], but from_bytes failed (incomplete packet or bad
+        // format)
+        break; // Wait for more data
+      }
     }
 
+    // packet has been successfully parsed here
     LumenPacket packet = *packet_opt;
-    size_t packet_size =
-        packet.total_size(); // Get size *including* headers, CRC, ETX
+    size_t packet_size = packet.total_size();
 
     // Remove the processed packet bytes from the buffer
     if (packet_size <= buffer.size()) {
@@ -288,22 +371,18 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
     } else {
       std::cerr << "[LUMEN] Internal error: Packet size (" << packet_size
                 << ") > buffer size (" << buffer.size()
-                << ") after successful parse. Buffer state might be corrupted."
-                << std::endl;
+                << ") after successful parse for " << endpoint_key
+                << ". Clearing buffer." << std::endl;
       buffer.clear(); // Clear buffer to prevent potential infinite loops
-      break;          // Should not happen if from_bytes is correct
+      break;
     }
 
     // Pass the validated, complete packet for processing
-    // Release the lock before calling process_complete_packet to avoid
-    // potential deadlocks if it calls back into LumenProtocol No, keep lock:
-    // process_complete_packet accesses ReliabilityManager which is thread-safe,
-    // but simpler to keep lock here.
     process_complete_packet(packet, endpoint);
-  }
 
-  // Basic protection against buffer growing indefinitely if data is corrupted
-  // or packets are huge.
+  } // End while loop processing buffer
+
+  // Basic protection against buffer growing indefinitely
   if (buffer.size() > MAX_FRAME_BUFFER_SIZE) {
     std::cerr << "[LUMEN] Frame buffer for endpoint " << endpoint_key
               << " exceeded max size (" << buffer.size() << " > "
@@ -319,7 +398,7 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
   LumenHeader::MessageType type = header.get_type();
   uint8_t seq = header.get_sequence();
 
-  std::cout << "[LUMEN] Received packet seq: " << static_cast<int>(seq)
+  std::cout << "[LUMEN] Processing packet seq: " << static_cast<int>(seq)
             << ", type: " << static_cast<int>(static_cast<uint8_t>(type))
             << ", size: " << payload.size() << " from " << endpoint
             << std::endl;
@@ -386,7 +465,6 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
       check_sequence_gaps(endpoint);
     }
   }
-  // --- End Reliability Actions ---
 
   // --- Forward Payload to Upper Layer (MessageManager) ---
   // Get a thread-safe copy of the callback function pointer.
@@ -457,18 +535,28 @@ void LumenProtocol::send_packet(const LumenPacket &packet,
         return;
       }
       // Rover needs to distinguish between sending to the main base station
-      // or another rover
-      if (recipient == client_->get_base_endpoint()) {
+      // or another rover/specific endpoint
+      bool sending_to_base = false;
+      try {
+        sending_to_base = (recipient == client_->get_base_endpoint());
+      } catch (const std::runtime_error &) {
+        // Handle case where base endpoint might not be resolved yet during
+        // startup
+        sending_to_base = false;
+      }
+
+      if (sending_to_base) {
         client_->send_data(
             data); // Use the client's default send (to registered base)
       } else {
+        // Send to a specific non-base endpoint
         client_->send_data_to(data, recipient);
       }
     }
   } catch (const std::exception &e) {
     std::cerr << "[ERROR] LumenProtocol failed to send packet seq "
-              << static_cast<int>(packet.get_header().get_sequence()) << ": "
-              << e.what() << std::endl;
+              << static_cast<int>(packet.get_header().get_sequence()) << " to "
+              << recipient << ": " << e.what() << std::endl;
   }
 }
 
@@ -506,12 +594,28 @@ void LumenProtocol::send_ack(uint8_t seq_to_ack,
 }
 
 // Sends a NAK packet (Rover only).
-void LumenProtocol::send_nak(uint8_t seq_requested,
-                             const udp::endpoint &recipient) {
+void LumenProtocol::send_nak(
+    uint8_t seq_requested,
+    const udp::endpoint & /*recipient*/) { // naks only go to base
   if (mode_ != ProtocolMode::ROVER) {
     std::cerr
         << "[ERROR] Invalid NAK attempt: BASE_STATION mode cannot send NAKs."
         << std::endl;
+    return;
+  }
+
+  // Ensure client and base endpoint are valid before sending NAK
+  if (!client_) {
+    std::cerr << "[LUMEN] Cannot send NAK: Client pointer is null."
+              << std::endl;
+    return;
+  }
+  udp::endpoint base_endpoint;
+  try {
+    base_endpoint = client_->get_base_endpoint();
+  } catch (const std::runtime_error &e) {
+    std::cerr << "[LUMEN] Cannot send NAK: Failed to get base endpoint: "
+              << e.what() << std::endl;
     return;
   }
 
@@ -530,11 +634,11 @@ void LumenProtocol::send_nak(uint8_t seq_requested,
 
   LumenPacket nak_packet(nak_header, nak_payload);
   // NAK is always sent to the base station endpoint.
-  send_packet(nak_packet, client_->get_base_endpoint());
+  send_packet(nak_packet, base_endpoint); // Use resolved base_endpoint
 
   std::cout << "[LUMEN] Sent NAK (packet seq " << static_cast<int>(nak_seq)
             << ") requesting missing seq: " << static_cast<int>(seq_requested)
-            << " to base " << client_->get_base_endpoint() << std::endl;
+            << " to base " << base_endpoint << std::endl;
 }
 
 // Generates a 32-bit timestamp (milliseconds since epoch, truncated).
