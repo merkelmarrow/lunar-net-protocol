@@ -79,7 +79,7 @@ public:
    */
   void send_broadcast_data(
       const std::vector<uint8_t> &data, int broadcast_port,
-      const std::string &broadcast_address_str = "10.237.0.255");
+      const std::string &broadcast_address_str = "255.255.255.255");
 
   /**
    * @brief Sets the callback function to be invoked when data is received.

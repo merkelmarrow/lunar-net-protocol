@@ -44,7 +44,8 @@ int main() {
             BasicMessage *basic_msg =
                 dynamic_cast<BasicMessage *>(message.get());
             if (basic_msg) {
-              Message::pretty_print(basic_msg->serialise());
+              std::cout << Message::pretty_print(basic_msg->serialise())
+                        << std::endl;
             }
           }
         });
@@ -98,7 +99,10 @@ int main() {
 
     // Coordinate request timer
     boost::asio::steady_timer request_timer(io_context);
-    // Define the handler using std::function to allow recursive scheduling
+    boost::asio::steady_timer broadcast_timer(io_context);
+
+    std::function<void(const boost::system::error_code &)>
+        broadcast_timer_handler;
     std::function<void(const boost::system::error_code &)>
         request_timer_handler;
 
@@ -127,6 +131,29 @@ int main() {
       request_timer.async_wait(request_timer_handler);
     };
 
+    broadcast_timer_handler = [&](const boost::system::error_code &ec) {
+      if (ec == boost::asio::error::operation_aborted) {
+        std::cout << "[Broadcast Timer] Timer cancelled." << std::endl;
+        return;
+      } else if (ec) {
+        std::cerr << "[Broadcast Timer] Timer error: " << ec.message()
+                  << std::endl;
+        return;
+      }
+
+      std::cout << "[Broadcast Timer] Sending periodic broadcast..."
+                << std::endl;
+      rover.scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE");
+
+      broadcast_timer.expires_after(std::chrono::seconds(60));
+      broadcast_timer.async_wait(broadcast_timer_handler);
+    };
+
+    broadcast_timer.expires_at(std::chrono::steady_clock::now());
+    broadcast_timer.async_wait(broadcast_timer_handler);
+    std::cout << "[ROVER MAIN] Periodic broadcast timer started (60s interval)."
+              << std::endl;
+
     // Start the timer for the first time
     request_timer.expires_after(std::chrono::seconds(10));
     request_timer.async_wait(request_timer_handler);
@@ -139,6 +166,7 @@ int main() {
           std::cout << "Interrupt signal received. Stopping..." << std::endl;
           request_timer.cancel();
           extra_listener->stop();
+          broadcast_timer.cancel();
           rover.stop();
           io_context.stop();
         });
