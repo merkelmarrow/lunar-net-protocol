@@ -127,7 +127,7 @@ int main() {
       }
 
       // Reschedule the timer for 10 seconds later
-      request_timer.expires_after(std::chrono::seconds(10));
+      request_timer.expires_after(std::chrono::seconds(17));
       request_timer.async_wait(request_timer_handler);
     };
 
@@ -146,7 +146,7 @@ int main() {
       extra_listener->scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE",
                                       ROVER_ID);
 
-      broadcast_timer.expires_after(std::chrono::seconds(60));
+      broadcast_timer.expires_after(std::chrono::seconds(23));
       broadcast_timer.async_wait(broadcast_timer_handler);
     };
 
@@ -156,7 +156,7 @@ int main() {
               << std::endl;
 
     // Start the timer for the first time
-    request_timer.expires_after(std::chrono::seconds(10));
+    request_timer.expires_after(std::chrono::seconds(14));
     request_timer.async_wait(request_timer_handler);
     std::cout << "[ROVER MAIN] Coordinate request timer started (10s interval)."
               << std::endl;
