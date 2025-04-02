@@ -105,7 +105,7 @@ void UdpClient::send_broadcast_data(const std::vector<uint8_t> &data,
   boost::system::error_code ec;
   udp::endpoint broadcast_endpoint;
 
-  if (broadcast_address_str == "255.255.255.255") {
+  if (broadcast_address_str == "10.237.0.255") {
     broadcast_endpoint =
         udp::endpoint(boost::asio::ip::address_v4::broadcast(), broadcast_port);
   } else {
