@@ -269,20 +269,36 @@ void Rover::scan_for_rovers(int discovery_port, const std::string &message) {
   }
 
   try {
-    std::cout << "[ROVER] Sending discovery broadcast (" << message
-              << ") on port " << discovery_port << std::endl;
+    std::cout << "[ROVER] Sending unicast scan (" << message
+              << ") to subnet 10.237.0.0/24 on port " << discovery_port
+              << std::endl;
 
-    // Use a CommandMessage for the discovery probe
     CommandMessage discover_msg("ROVER_DISCOVER", message, rover_id_);
     std::string json_payload = discover_msg.serialise();
     std::vector<uint8_t> data_to_send(json_payload.begin(), json_payload.end());
 
-    // Call the UdpClient's broadcast method
-    client_->send_broadcast_data(data_to_send, discovery_port); // Uses default
+    for (int i = 2; i <= 150; ++i) {
+      std::string ip_str = "10.237.0." + std::to_string(i);
+
+      boost::system::error_code ec;
+      boost::asio::ip::address_v4 target_addr =
+          boost::asio::ip::make_address_v4(ip_str, ec);
+
+      if (ec) {
+        std::cerr << "[ROVER] Error creating address " << ip_str << ": "
+                  << ec.message() << std::endl;
+        continue;
+      }
+
+      udp::endpoint target_endpoint(
+          target_addr, static_cast<unsigned short>(discovery_port));
+      client_->send_data_to(data_to_send, target_endpoint);
+    }
+
+    std::cout << "[ROVER] Finished sending unicast scan packets." << std::endl;
 
   } catch (const std::exception &e) {
-    std::cerr << "[ROVER] Error during discovery scan: " << e.what()
-              << std::endl;
+    std::cerr << "[ROVER] Error during unicast scan: " << e.what() << std::endl;
   }
 }
 

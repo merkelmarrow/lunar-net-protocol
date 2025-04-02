@@ -1,15 +1,15 @@
 // src/base/udp_server.cpp
 
 #include "udp_server.hpp"
+#include "command_message.hpp"
 #include <boost/asio/buffer.hpp>
 #include <boost/system/error_code.hpp>
 #include <iostream>
 #include <vector> // For std::vector
 
 UdpServer::UdpServer(boost::asio::io_context &context, int port)
-    : // Initialize the socket, binding it to the specified port on all
-      // available IPv4 interfaces.
-      socket_(context, udp::endpoint(udp::v4(), port)), running_(false) {
+    : io_context_(context), socket_(context, udp::endpoint(udp::v4(), port)),
+      running_(false) {
   std::cout << "[SERVER] UDP Server socket created and bound to port " << port
             << std::endl;
 }
@@ -153,4 +153,44 @@ void UdpServer::receive_data() {
 const udp::endpoint UdpServer::get_sender_endpoint() {
   std::lock_guard<std::mutex> lock(endpoint_mutex_);
   return sender_endpoint_;
+}
+
+void UdpServer::scan_for_rovers(int discovery_port, const std::string &message,
+                                const std::string &sender_id) {
+  if (!running_) {
+    std::cerr << "[SERVER SCAN] Error: Server not running." << std::endl;
+    return;
+  }
+  try {
+    std::cout << "[SERVER SCAN] Sending unicast scan (" << message
+              << ") from sender '" << sender_id
+              << "' to subnet 10.237.0.0/24 on port " << discovery_port
+              << std::endl;
+
+    CommandMessage discover_msg("ROVER_DISCOVER", message, sender_id);
+    std::string json_payload = discover_msg.serialise();
+    std::vector<uint8_t> data_to_send(json_payload.begin(), json_payload.end());
+
+    for (int i = 2; i <= 120; ++i) {
+      std::string ip_str = "10.237.0." + std::to_string(i);
+      boost::system::error_code ec;
+      boost::asio::ip::address_v4 target_addr =
+          boost::asio::ip::make_address_v4(ip_str, ec);
+      if (ec) {
+        std::cerr << "[SERVER SCAN] Error creating address " << ip_str << ": "
+                  << ec.message() << std::endl;
+        continue;
+      }
+
+      udp::endpoint target_endpoint(
+          target_addr, static_cast<unsigned short>(discovery_port));
+      send_data(data_to_send, target_endpoint);
+    }
+    std::cout << "[SERVER SCAN] Finished queuing unicast scan packets."
+              << std::endl;
+
+  } catch (const std::exception &e) {
+    std::cerr << "[SERVER SCAN] Error during unicast scan: " << e.what()
+              << std::endl;
+  }
 }

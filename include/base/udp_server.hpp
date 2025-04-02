@@ -74,6 +74,9 @@ public:
   void send_data(const std::vector<uint8_t> &data,
                  const udp::endpoint &recipient);
 
+  void scan_for_rovers(int discovery_port, const std::string &message,
+                       const std::string &sender_id);
+
   /**
    * @brief Gets the UDP endpoint of the sender of the most recently received
    * datagram. Note: This value is updated asynchronously. Use with appropriate
@@ -107,5 +110,7 @@ private:
                               ///< (primarily for get_sender_endpoint).
   std::mutex callback_mutex_; ///< Mutex to protect access to receive_callback_.
   std::atomic<bool> running_; ///< Flag to control the receive loop. Marked
-                              ///< atomic for visibility.
+  ///< atomic for visibility.
+
+  boost::asio::io_context &io_context_;
 };

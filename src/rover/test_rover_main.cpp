@@ -143,7 +143,8 @@ int main() {
 
       std::cout << "[Broadcast Timer] Sending periodic broadcast..."
                 << std::endl;
-      rover.scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE");
+      extra_listener->scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE",
+                                      ROVER_ID);
 
       broadcast_timer.expires_after(std::chrono::seconds(60));
       broadcast_timer.async_wait(broadcast_timer_handler);
@@ -165,7 +166,8 @@ int main() {
         [&](const boost::system::error_code &, int /*signal_number*/) {
           std::cout << "Interrupt signal received. Stopping..." << std::endl;
           request_timer.cancel();
-          extra_listener->stop();
+          if (extra_listener)
+            extra_listener->stop();
           broadcast_timer.cancel();
           rover.stop();
           io_context.stop();
