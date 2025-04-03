@@ -104,7 +104,7 @@ int main() {
                     << std::endl;
 
           std::string received_msg(data.begin(), data.end());
-          std::cout << "[Listener " << EXTRA_LISTENER_PORT
+          std::cout << "[Listener " << COORD_REQUEST_TARGET_PORT
                     << "] Raw Message: " << received_msg << std::endl;
 
           std::map<std::string, double> location = {{"latitude", 53.3498},
@@ -112,7 +112,7 @@ int main() {
 
           TelemetryMessage location_msg(location, ROVER_ID);
 
-          std::cout << "[Listener " << EXTRA_LISTENER_PORT
+          std::cout << "[Listener " << COORD_REQUEST_TARGET_PORT
                     << "] Sending location message back to " << sender
                     << std::endl;
           rover.send_raw_message(location_msg, sender);
