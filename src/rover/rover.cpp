@@ -876,8 +876,6 @@ void Rover::handle_base_disconnect() {
 
   // Cancel timers that depend on ACTIVE state
   boost::system::error_code ec;
-  status_timer_.cancel(ec);
-  position_telemetry_timer_.cancel(ec);
   handshake_timer_.cancel(ec);
   probe_timer_.cancel(ec); // Cancel any existing probe timer first
 
