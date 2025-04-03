@@ -315,7 +315,7 @@ private:
 
   static constexpr double MOVE_RATE_METERS_PER_SECOND = 1.0;
   static constexpr std::chrono::milliseconds MOVEMENT_INTERVAL{1000};
-  static constexpr double TARGET_REACHED_THRESHOLD_METERS = 2.0;
+  static constexpr double TARGET_REACHED_THRESHOLD_METERS = 1.0;
 
   static constexpr std::chrono::seconds PROBE_INTERVAL{5};
 };

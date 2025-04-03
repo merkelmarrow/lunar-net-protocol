@@ -22,22 +22,8 @@ class TelemetryMessage;
 
 using boost::asio::ip::udp;
 
-/**
- * @class BaseStation
- * @brief Represents the main application logic for the Base Station node.
- *
- * This class orchestrates the communication layers (UDP Server, Lumen Protocol,
- * Message Manager) for the base station. It handles session management
- * (handshake with the Rover), routes incoming messages to appropriate
- * internal handlers or application-level callbacks, and provides methods for
- * sending commands and messages to the connected Rover.
- */
 class BaseStation {
 public:
-  /**
-   * @enum SessionState
-   * @brief Defines the possible states of the session with a Rover.
-   */
   enum class SessionState {
     INACTIVE,         ///< No active session, listening for connections.
     HANDSHAKE_INIT,   ///< Received SESSION_INIT from a rover.
