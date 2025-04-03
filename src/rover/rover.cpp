@@ -645,58 +645,6 @@ void Rover::handle_handshake_timer() {
   }
 }
 
-void Rover::handle_base_disconnect() {
-  // Use a lock to ensure state is checked and modified atomically
-  std::lock_guard<std::mutex> lock(state_mutex_);
-
-  // Check if already disconnected or inactive to avoid redundant actions
-  if (session_state_ != SessionState::ACTIVE) {
-    std::cout << "[ROVER INTERNAL] Ignoring disconnect signal, not in ACTIVE "
-                 "state (current state: "
-              << static_cast<int>(session_state_) << ")." << std::endl;
-    return; // Already disconnected or never connected
-  }
-
-  std::cout << "[ROVER INTERNAL] Detected base station disconnect. "
-               "Transitioning to DISCONNECTED state."
-            << std::endl;
-  session_state_ = SessionState::DISCONNECTED;
-
-  // Cancel timers that depend on ACTIVE state
-  boost::system::error_code ec;
-  status_timer_.cancel(ec);
-  position_telemetry_timer_.cancel(ec);
-  handshake_timer_.cancel(ec);
-  probe_timer_.cancel(ec); // Cancel any existing probe timer first
-
-  // Reset protocol sequence number and reliability state
-  // Post the reset to the io_context to run safely on the event loop thread
-  boost::asio::post(io_context_, [this]() {
-    if (protocol_) { // Check pointer validity inside the handler
-      protocol_->reset_sequence_number();
-    } else {
-      std::cerr << "[ROVER INTERNAL] Warning: Cannot reset sequence number, "
-                   "protocol_ is null."
-                << std::endl;
-    }
-  });
-
-  // Start the probe timer (also post to ensure it runs on the event loop)
-  boost::asio::post(io_context_, [this]() {
-    probe_timer_.expires_after(std::chrono::seconds(0)); // Start immediately
-    probe_timer_.async_wait([this](const boost::system::error_code &error) {
-      if (!error) {
-        handle_probe_timer(); // schedule next probe check
-      } else if (error != boost::asio::error::operation_aborted) {
-        std::cerr << "[ROVER INTERNAL] Probe timer wait error: "
-                  << error.message() << std::endl;
-      }
-    });
-    std::cout << "[ROVER INTERNAL] Started periodic probing timer."
-              << std::endl;
-  });
-}
-
 void Rover::send_stored_packets() {
   std::lock_guard<std::mutex> lock(stored_packets_mutex_);
   if (stored_packets_.empty()) {
