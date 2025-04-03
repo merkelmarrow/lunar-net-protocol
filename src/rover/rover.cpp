@@ -26,8 +26,8 @@ std::string endpoint_to_string(const udp::endpoint &ep) {
 Rover::Rover(boost::asio::io_context &io_context, const std::string &base_host,
              int base_port, const std::string &rover_id)
     : io_context_(io_context), status_timer_(io_context),
-      handshake_timer_(io_context), session_state_(SessionState::INACTIVE),
-      rover_id_(rover_id),
+      position_telemetry_timer_(io_context), handshake_timer_(io_context),
+      session_state_(SessionState::INACTIVE), rover_id_(rover_id),
       current_status_level_(StatusMessage::StatusLevel::OK),
       current_status_description_("System nominal"), handshake_retry_count_(0) {
   // Initialize communication layers
@@ -91,6 +91,7 @@ void Rover::stop() {
   boost::system::error_code ec;
   status_timer_.cancel(ec);
   handshake_timer_.cancel(ec);
+  position_telemetry_timer_.cancel(ec);
 
   // Stop layers in reverse order
   if (client_)
@@ -110,6 +111,15 @@ void Rover::stop() {
     discovered_rovers_.clear(); // Clear discovered rovers
   }
   std::cout << "[ROVER] Stopped" << std::endl;
+}
+
+void Rover::update_position(double lat, double lon) {
+  std::lock_guard<std::mutex> lock(position_mutex_);
+  current_latitude_ = lat;
+  current_longitude_ = lon;
+
+  std::cout << "[ROVER] Position updated: Lat=" << lat << ", Lon=" << lon
+            << std::endl;
 }
 
 // --- Callback Setters ---
@@ -583,7 +593,7 @@ void Rover::handle_session_accept() {
 
 void Rover::handle_session_established() {
   std::cout << "[ROVER INTERNAL] Received SESSION_ESTABLISHED." << std::endl;
-  bool needs_status_timer_start = false;
+  bool needs_timer_start = false;
   { // State Mutex Lock Scope
     std::lock_guard<std::mutex> lock(state_mutex_);
     if (session_state_ != SessionState::ACTIVE) {
@@ -594,7 +604,7 @@ void Rover::handle_session_established() {
       }
       session_state_ = SessionState::ACTIVE;
       handshake_retry_count_ = 0; // Reset retries on success
-      needs_status_timer_start = true;
+      needs_timer_start = true;
       std::cout << "[ROVER INTERNAL] Session ACTIVE." << std::endl;
 
       // Cancel handshake timer
@@ -607,16 +617,58 @@ void Rover::handle_session_established() {
     }
   } // State Mutex Lock Released
 
-  if (needs_status_timer_start) {
+  if (needs_timer_start) {
     std::cout << "[ROVER INTERNAL] Starting periodic status timer."
               << std::endl;
     handle_status_timer(); // Start the timer loop
+    handle_position_telemetry_timer();
   }
 }
 
-// --- Timer Handlers ---
+void Rover::handle_position_telemetry_timer() {
+  double lat, lon;
+  bool is_active;
+
+  {
+    std::lock_guard<std::mutex> lock(position_mutex_);
+    lat = current_latitude_;
+    lon = current_longitude_;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    is_active = (session_state_ == SessionState::ACTIVE);
+  }
+
+  if (is_active) {
+    std::map<std::string, double> position_data = {{"latitude", lat},
+                                                   {"longitude", lon}};
+
+    send_telemetry(position_data);
+
+    boost::system::error_code ec;
+    position_telemetry_timer_.expires_after(POSITION_TELEMETRY_INTERVAL);
+    position_telemetry_timer_.async_wait(
+        [this](const boost::system::error_code &ec) {
+          if (!ec && get_session_state() == SessionState::ACTIVE) {
+
+            handle_position_telemetry_timer();
+          } else if (ec && ec != boost::asio::error::operation_aborted) {
+            std::cerr
+                << "[ROVER INTERNAL] Position telemetry timer wait error: "
+                << ec.message() << std::endl;
+          }
+        });
+  } else {
+
+    std::cout << "[ROVER INTERNAL] Position telemetry timer fired but session "
+                 "is inactive. Not sending/rescheduling."
+              << std::endl;
+  }
+}
+
 void Rover::handle_status_timer() {
-  send_status(); // Attempt to send status
+  send_status();
 
   bool is_active;
   {
@@ -628,16 +680,18 @@ void Rover::handle_status_timer() {
     boost::system::error_code ec;
     status_timer_.expires_after(STATUS_INTERVAL);
     status_timer_.async_wait(
-        [this, &is_active](const boost::system::error_code &ec) {
-          // Check error code and if still active before recursing
+        [this /*, &is_active*/](const boost::system::error_code &ec) {
           if (!ec && get_session_state() == SessionState::ACTIVE) {
             handle_status_timer();
           } else if (ec && ec != boost::asio::error::operation_aborted) {
             std::cerr << "[ROVER INTERNAL] Status timer wait error: "
                       << ec.message() << std::endl;
-          } else if (!is_active) {
-            std::cout << "[ROVER INTERNAL] Status timer stopping (session no "
-                         "longer active)."
+
+          } else if (get_session_state() != SessionState::ACTIVE &&
+                     ec == boost::asio::error::operation_aborted) {
+
+            std::cout << "[ROVER INTERNAL] Status timer stopped (session no "
+                         "longer active or aborted)."
                       << std::endl;
           }
         });

@@ -202,6 +202,9 @@ public:
    */
   void send_command(const std::string &command, const std::string &params);
 
+  void update_position(double lat, double lon);
+  void handle_position_telemetry_timer();
+
 private:
   /**
    * @brief Central routing function called when a message is received.
@@ -250,6 +253,7 @@ private:
   // --- Timers ---
   boost::asio::steady_timer status_timer_;
   boost::asio::steady_timer handshake_timer_;
+  boost::asio::steady_timer position_telemetry_timer_;
 
   // --- Callbacks ---
   ApplicationMessageHandler application_message_handler_ = nullptr;
@@ -269,9 +273,15 @@ private:
   std::mutex handler_mutex_;
   mutable std::mutex discovery_mutex_;
   std::mutex discovery_handler_mutex_;
+  std::mutex position_mutex_;
 
   // --- Constants ---
   static constexpr int MAX_HANDSHAKE_RETRIES = 5;
-  static constexpr std::chrono::seconds STATUS_INTERVAL{10};
+  static constexpr std::chrono::seconds STATUS_INTERVAL{15};
   static constexpr std::chrono::seconds HANDSHAKE_TIMEOUT{5};
+  static constexpr std::chrono::seconds POSITION_TELEMETRY_INTERVAL{10};
+
+  // position data
+  double current_latitude_ = 0.0;
+  double current_longitude_ = 0.0;
 };
