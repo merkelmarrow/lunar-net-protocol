@@ -1,152 +1,149 @@
 // src/base/test_base_main.cpp
 
 #include "base_station.hpp"
-#include "basic_message.hpp"
-#include "command_message.hpp"
-#include "status_message.hpp"
-#include "telemetry_message.hpp"
+#include "message.hpp"
+#include <atomic>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
-#include <chrono>
 #include <iostream>
-#include <map>
 #include <memory>
-#include <thread> // For running io_context
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
 
-const int BASE_PORT = 9001;
-const std::string BASE_ID = "TestBaseStation";
+std::atomic<bool> shutdown_requested = false;
 
-// --- Callback Handlers ---
+// simple command line input thread for testing base station commands
+void command_input_thread(BaseStation &base,
+                          boost::asio::io_context &io_context) {
+  std::string line;
+  std::cout << "[CMD INPUT] Enter commands (e.g., 'low_power on', 'set_target "
+               "53.1 -6.5', 'quit'):"
+            << std::endl;
+  while (std::getline(std::cin, line)) {
+    if (shutdown_requested)
+      break; // exit if shutdown requested
 
-// Handles general messages not specifically routed elsewhere
-void handle_base_app_message(std::unique_ptr<Message> message,
-                             const udp::endpoint &sender) {
-  if (!message)
-    return;
-  std::cout << "[BASE TEST APP] Received message from " << sender
-            << ", Type: " << message->get_type() << std::endl;
-
-  if (message->get_type() == BasicMessage::message_type()) {
-    auto *basic_msg = dynamic_cast<BasicMessage *>(message.get());
-    if (basic_msg) {
-      std::cout << "  Basic Content: " << basic_msg->get_content() << std::endl;
+    std::istringstream iss(line);
+    std::vector<std::string> tokens;
+    std::string token;
+    while (iss >> token) {
+      tokens.push_back(token);
     }
+
+    if (tokens.empty())
+      continue;
+
+    std::string command = tokens[0];
+
+    if (command == "quit") {
+      std::cout << "[CMD INPUT] Quit command received. Signaling shutdown..."
+                << std::endl;
+      shutdown_requested = true;
+      // post a task to safely stop base station and io_context
+      boost::asio::post(io_context, [&]() {
+        base.stop();
+        io_context.stop();
+      });
+      break; // exit input loop
+    } else if (command == "low_power" && tokens.size() == 2) {
+      bool enable = (tokens[1] == "on");
+      std::cout << "[CMD INPUT] Requesting low power mode: "
+                << (enable ? "ON" : "OFF") << std::endl;
+      // post action to io_context to run on main thread
+      boost::asio::post(io_context,
+                        [&base, enable]() { base.set_low_power_mode(enable); });
+    } else if (command == "set_target" && tokens.size() == 3) {
+      try {
+        double lat = std::stod(tokens[1]);
+        double lon = std::stod(tokens[2]);
+        std::cout << "[CMD INPUT] Setting target coordinates: Lat=" << lat
+                  << ", Lon=" << lon << std::endl;
+        // post action to io_context
+        boost::asio::post(io_context, [&base, lat, lon]() {
+          base.set_rover_target(lat, lon);
+        });
+      } catch (const std::exception &e) {
+        std::cerr << "[CMD INPUT] Invalid coordinates: " << e.what()
+                  << std::endl;
+      }
+    } else {
+      std::cerr << "[CMD INPUT] Unknown command or incorrect arguments: "
+                << line << std::endl;
+    }
+    if (shutdown_requested)
+      break; // re-check after processing
   }
-  // Add handling for other expected application-specific message types here
-}
-
-// Handles Status and Telemetry messages
-void handle_base_status_telemetry(const std::string &rover_id,
-                                  const std::map<std::string, double> &data) {
-  std::cout << "[BASE TEST STATUS/TELEMETRY] Received data from Rover ID: "
-            << rover_id << std::endl;
-
-  // Check if it contains status_level (indicating a StatusMessage)
-  if (data.count("status_level")) {
-    int level_int = static_cast<int>(data.at("status_level"));
-    std::string level_str = "UNKNOWN";
-    // Note: Cannot get description easily here as map stores doubles
-    switch (static_cast<StatusMessage::StatusLevel>(level_int)) {
-    case StatusMessage::StatusLevel::OK:
-      level_str = "OK";
-      break;
-    case StatusMessage::StatusLevel::WARNING:
-      level_str = "WARNING";
-      break;
-    case StatusMessage::StatusLevel::ERROR:
-      level_str = "ERROR";
-      break;
-    case StatusMessage::StatusLevel::CRITICAL:
-      level_str = "CRITICAL";
-      break;
-    }
-    std::cout << "  Status Level: " << level_str << " (" << level_int << ")"
-              << std::endl;
-  } else {
-    // Assume TelemetryMessage
-    std::cout << "  Telemetry Readings:" << std::endl;
-    for (const auto &pair : data) {
-      std::cout << "    " << pair.first << ": " << pair.second << std::endl;
-    }
-  }
+  std::cout << "[CMD INPUT] Input thread finished." << std::endl;
 }
 
 int main() {
+  const int LISTEN_PORT = 9000; // port for the base station to listen on
+  const std::string STATION_ID = "grp18-base";
+
   try {
     boost::asio::io_context io_context;
 
-    // Set up signal handling for graceful shutdown
+    // handle sigint/sigterm for graceful shutdown
     boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
-    signals.async_wait(
-        [&](const boost::system::error_code &error, int signal_number) {
-          if (!error) {
-            std::cout << "Signal " << signal_number << " received. Stopping..."
+    signals.async_wait([&](const boost::system::error_code & /*error*/,
+                           int /*signal_number*/) {
+      std::cout << "[BASE MAIN] Signal received. Signaling shutdown..."
+                << std::endl;
+      shutdown_requested = true;
+      // post stop actions to ensure thread safety
+      boost::asio::post(io_context, [&]() {
+        io_context.stop(); // stop the event loop
+      });
+    });
+
+    // create the basestation instance
+    BaseStation base(io_context, LISTEN_PORT, STATION_ID);
+
+    // set a simple handler to print received messages
+    base.set_application_message_handler(
+        [&](std::unique_ptr<Message> message,
+            const boost::asio::ip::udp::endpoint &sender) {
+          if (shutdown_requested || !message)
+            return;
+          std::cout << "[BASE MAIN] Received message type '"
+                    << message->get_type() << "' from "
+                    << sender.address().to_string() << ":" << sender.port()
+                    << std::endl;
+          try {
+            std::cout << "  Content:\n"
+                      << Message::pretty_print(message->serialise())
                       << std::endl;
-            io_context.stop(); // Request io_context to stop
+          } catch (const std::exception &e) {
+            std::cerr << "  Error pretty-printing message: " << e.what()
+                      << std::endl;
           }
         });
 
-    // Create Base Station
-    BaseStation base_station(io_context, BASE_PORT, BASE_ID);
+    // start the base station
+    base.start();
 
-    // Register callbacks
-    base_station.set_application_message_handler(handle_base_app_message);
-    base_station.set_status_callback(handle_base_status_telemetry);
+    std::cout << "[BASE MAIN] Base station started on port " << LISTEN_PORT
+              << "." << std::endl;
+    std::cout << "[BASE MAIN] Waiting for connections..." << std::endl;
 
-    // Start the base station
-    base_station.start();
-    std::cout << "[BASE MAIN] Base Station started on port " << BASE_PORT
-              << ". Waiting for Rover..." << std::endl;
+    // start command input thread
+    std::thread input_thread(command_input_thread, std::ref(base),
+                             std::ref(io_context));
 
-    // Run io_context in a separate thread
-    std::thread io_thread([&io_context]() {
-      try {
-        io_context.run();
-      } catch (const std::exception &e) {
-        std::cerr << "Exception in io_context thread: " << e.what()
-                  << std::endl;
-      }
-      std::cout << "[BASE MAIN] io_context finished." << std::endl;
-    });
+    // run the asio event loop
+    io_context.run();
 
-    // --- Example Interaction Logic (Runs after setup) ---
-    bool command_sent = false;
-    while (!io_context.stopped()) {
-      // Wait for the session to become active
-      if (base_station.get_session_state() ==
-          BaseStation::SessionState::ACTIVE) {
-        if (!command_sent) {
-          std::cout << "[BASE MAIN] Session Active! Sending test command..."
-                    << std::endl;
-          // Send a command message once connected
-          base_station.send_command("TEST_COMMAND",
-                                    "param1=value1,param2=value2");
-          command_sent = true; // Send only once
-        }
-      } else {
-        // Reset flag if session becomes inactive again
-        command_sent = false;
-      }
+    std::cout << "[BASE MAIN] io_context stopped." << std::endl;
 
-      // Prevent busy-waiting
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+    // wait for input thread to finish
+    if (input_thread.joinable()) {
+      // potentially send newline to stdin to unblock getline if needed
+      input_thread.join();
     }
-
-    // --- Shutdown ---
-    std::cout << "[BASE MAIN] Shutting down Base Station..." << std::endl;
-    base_station.stop(); // Stop the application logic first
-
-    // io_context might already be stopped by signal handler,
-    // but ensure run() exits if it hasn't already.
-    if (!io_context.stopped()) {
-      io_context.stop();
-    }
-
-    if (io_thread.joinable()) {
-      io_thread.join(); // Wait for the io_context thread to finish
-    }
-
-    std::cout << "[BASE MAIN] Base Station stopped cleanly." << std::endl;
+    std::cout << "[BASE MAIN] Input thread joined." << std::endl;
 
   } catch (const std::exception &e) {
     std::cerr << "[BASE MAIN] Exception: " << e.what() << std::endl;

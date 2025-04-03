@@ -1,15 +1,15 @@
 // src/base/udp_server.cpp
 
 #include "udp_server.hpp"
+#include "command_message.hpp" // needed for scan_for_rovers
 #include <boost/asio/buffer.hpp>
 #include <boost/system/error_code.hpp>
 #include <iostream>
-#include <vector> // For std::vector
+#include <vector>
 
 UdpServer::UdpServer(boost::asio::io_context &context, int port)
-    : // Initialize the socket, binding it to the specified port on all
-      // available IPv4 interfaces.
-      socket_(context, udp::endpoint(udp::v4(), port)), running_(false) {
+    : io_context_(context), socket_(context, udp::endpoint(udp::v4(), port)),
+      running_(false) {
   std::cout << "[SERVER] UDP Server socket created and bound to port " << port
             << std::endl;
 }
@@ -21,17 +21,17 @@ void UdpServer::start() {
     return;
   running_ = true;
   std::cout << "[SERVER] Starting UDP Server listener..." << std::endl;
-  // Initiate the first asynchronous receive operation.
+  // initiate the first asynchronous receive operation
   receive_data();
 }
 
 void UdpServer::stop() {
-  running_ = false; // Prevent new async operations from being started
+  running_ = false; // prevent new async operations
 
-  // Close the socket to interrupt pending operations and release the port.
+  // close socket to interrupt pending operations and release port
   if (socket_.is_open()) {
     boost::system::error_code ec;
-    socket_.close(ec); // Close the socket
+    socket_.close(ec);
     if (ec) {
       std::cerr << "[ERROR] Error closing server socket: " << ec.message()
                 << std::endl;
@@ -62,49 +62,40 @@ void UdpServer::send_data(const std::vector<uint8_t> &data,
     return;
   }
 
-  // Initiate an asynchronous send operation.
+  // initiate an asynchronous send operation
   socket_.async_send_to(boost::asio::buffer(data), recipient,
-                        // Completion handler lambda:
                         [this, recipient](boost::system::error_code ec,
-                                          std::size_t bytes_sent /*length*/) {
+                                          std::size_t /*bytes_sent*/) {
                           if (ec) {
                             std::cerr
                                 << "[ERROR] UdpServer failed to send data to "
                                 << recipient << ": " << ec.message()
                                 << std::endl;
                           } else {
+                            // successful send, optional logging removed for
+                            // brevity
                           }
                         });
 }
 
-// Initiates or continues the asynchronous receive loop.
+// initiates or continues the asynchronous receive loop
 void UdpServer::receive_data() {
   if (!running_)
-    return; // Don't start a new receive if stopped
+    return; // don't start new receive if stopped
 
-  // Start an asynchronous receive operation.
-  // Data will be placed into buffer_.
-  // The sender's endpoint will be stored in sender_endpoint_.
-  // The lambda is the completion handler.
+  // start an asynchronous receive operation
   socket_.async_receive_from(
-      boost::asio::buffer(buffer_), // Target buffer
-      sender_endpoint_,             // Will be populated with sender's endpoint
-      // Completion Handler:
+      boost::asio::buffer(buffer_), // target buffer
+      sender_endpoint_,             // populated with sender's endpoint
+      // completion handler:
       [this](const boost::system::error_code &ec, std::size_t length) {
-        // Check if the operation was successful and if the server is still
-        // running.
+        // check if operation successful and server still running
         if (!ec && running_) {
-          // Convert the received data from the internal buffer to a
-          // std::vector.
+          // convert received data from internal buffer to std::vector
           std::vector<uint8_t> received_data(buffer_.data(),
                                              buffer_.data() + length);
 
-          // std::cout << "[SERVER] Received " << length << " bytes from " <<
-          // sender_endpoint_ << std::endl; // Reduced verbosity
-
-          // Get thread-safe copies of the endpoint and callback.
-          // sender_endpoint_ is updated by async_receive_from before this
-          // handler runs.
+          // get thread-safe copies of endpoint and callback
           udp::endpoint endpoint_copy = sender_endpoint_;
           std::function<void(const std::vector<uint8_t> &,
                              const udp::endpoint &)>
@@ -114,7 +105,7 @@ void UdpServer::receive_data() {
             callback_copy = receive_callback_;
           }
 
-          // Invoke the application-level callback if it's set.
+          // invoke application-level callback if set
           if (callback_copy) {
             try {
               callback_copy(received_data, endpoint_copy);
@@ -128,29 +119,70 @@ void UdpServer::receive_data() {
                       << std::endl;
           }
 
-          // If still running, issue the next receive operation to continue
-          // listening.
+          // if still running, issue next receive operation
           if (running_) {
-            receive_data(); // Recursive call to keep listening
+            receive_data(); // recursive call to keep listening
           }
         } else if (ec == boost::asio::error::operation_aborted) {
-          // Operation aborted is expected when stop() closes the socket.
+          // expected when stop() closes socket
           std::cout
               << "[SERVER] Receive operation aborted (likely due to stop)."
               << std::endl;
         } else if (running_) {
-          // An unexpected error occurred.
+          // unexpected error
           std::cerr << "[ERROR] UdpServer receive error: " << ec.message()
                     << std::endl;
-
-          stop();
+          // consider adding retry logic or just stop
+          stop(); // simple stop on error for now
         }
-        // If !running_, the handler simply returns, stopping the loop.
-      }); // End of completion handler lambda
+        // if !running_, handler returns, stopping the loop
+      }); // end of completion handler lambda
 }
 
-// Provides access to the endpoint of the most recent sender.
+// provides access to the endpoint of the most recent sender
 const udp::endpoint UdpServer::get_sender_endpoint() {
   std::lock_guard<std::mutex> lock(endpoint_mutex_);
   return sender_endpoint_;
+}
+
+// used for discovery, sends unicast probes across a subnet range
+void UdpServer::scan_for_rovers(int discovery_port, const std::string &message,
+                                const std::string &sender_id) {
+  if (!running_) {
+    std::cerr << "[SERVER SCAN] Error: Server not running." << std::endl;
+    return;
+  }
+  try {
+    std::cout << "[SERVER SCAN] Sending unicast scan (" << message
+              << ") from sender '" << sender_id
+              << "' to subnet 10.237.0.0/24 on port " << discovery_port
+              << std::endl;
+
+    CommandMessage discover_msg("ROVER_DISCOVER", message, sender_id);
+    std::string json_payload = discover_msg.serialise();
+    std::vector<uint8_t> data_to_send(json_payload.begin(), json_payload.end());
+
+    // iterates through a common private ip range, adjust as needed
+    for (int i = 2; i <= 120; ++i) { // todo: make range configurable
+      std::string ip_str = "10.237.0." + std::to_string(i);
+      boost::system::error_code ec;
+      boost::asio::ip::address_v4 target_addr =
+          boost::asio::ip::make_address_v4(ip_str, ec);
+      if (ec) {
+        std::cerr << "[SERVER SCAN] Error creating address " << ip_str << ": "
+                  << ec.message() << std::endl;
+        continue;
+      }
+
+      udp::endpoint target_endpoint(
+          target_addr, static_cast<unsigned short>(discovery_port));
+      send_data(data_to_send, target_endpoint); // uses the async send_data
+    }
+    std::cout << "[SERVER SCAN] Finished queuing unicast scan packets."
+              << std::endl;
+
+  } catch (const std::exception &e) {
+    std::cerr << "[SERVER SCAN] Error during unicast scan: " << e.what()
+              << std::endl;
+  }
 }

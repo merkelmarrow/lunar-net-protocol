@@ -3,12 +3,12 @@
 #include "udp_client.hpp"
 #include "configs.hpp"
 
-#include <atomic> // Include atomic
+#include <atomic>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
-#include <boost/asio/socket_base.hpp> // For broadcast option
+#include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
@@ -21,9 +21,9 @@
 UdpClient::UdpClient(boost::asio::io_context &io_context)
     : io_context_(io_context),
       socket_(io_context,
-              udp::endpoint(udp::v4(), 0)), // Bind to any available port
+              udp::endpoint(udp::v4(), 0)), // bind to any available port
       running_(false) {
-  enable_broadcast(); // Attempt to enable broadcast on creation
+  enable_broadcast(); // attempt on creation
 }
 
 UdpClient::~UdpClient() { stop_receive(); }
@@ -61,6 +61,7 @@ void UdpClient::register_base(const std::string &host, int port) {
   }
 }
 
+// sends data to the default registered base station
 void UdpClient::send_data(const std::vector<uint8_t> &data) {
   if (base_endpoint_.address().is_unspecified()) {
     std::cerr << "[ERROR] UdpClient::send_data: Base endpoint is not "
@@ -79,6 +80,7 @@ void UdpClient::send_data(const std::vector<uint8_t> &data) {
                         });
 }
 
+// sends data to a specific, provided recipient endpoint
 void UdpClient::send_data_to(const std::vector<uint8_t> &data,
                              const udp::endpoint &recipient) {
   if (recipient.address().is_unspecified() || recipient.port() == 0) {
@@ -105,7 +107,10 @@ void UdpClient::send_broadcast_data(const std::vector<uint8_t> &data,
   boost::system::error_code ec;
   udp::endpoint broadcast_endpoint;
 
-  if (broadcast_address_str == "255.255.255.255") {
+  // handle common broadcast address or specific subnet broadcast
+  // todo: make broadcast address logic more robust/configurable
+  if (broadcast_address_str == "255.255.255.255" ||
+      broadcast_address_str == "10.237.0.255") { // example handling
     broadcast_endpoint =
         udp::endpoint(boost::asio::ip::address_v4::broadcast(), broadcast_port);
   } else {
@@ -143,18 +148,18 @@ void UdpClient::set_receive_callback(
 }
 
 void UdpClient::start_receive() {
-  if (running_.load()) // Use atomic load
-    return;
-  running_.store(true); // Use atomic store
+  if (running_.load())
+    return;             // use atomic load
+  running_.store(true); // use atomic store
   std::cout << "[CLIENT] Starting receiver..." << std::endl;
   do_receive();
 }
 
 void UdpClient::stop_receive() {
   bool expected = true;
-  if (!running_.compare_exchange_strong(
-          expected, false)) { // Stop receiving loop atomically
-    return;                   // Already stopped
+  if (!running_.compare_exchange_strong(expected,
+                                        false)) { // stop loop atomically
+    return;                                       // already stopped
   }
 
   if (socket_.is_open()) {
@@ -169,24 +174,24 @@ void UdpClient::stop_receive() {
 }
 
 const udp::endpoint &UdpClient::get_base_endpoint() const {
-  // Added check for safety, although register_base should throw if failed
   if (base_endpoint_.address().is_unspecified()) {
     throw std::runtime_error("Base endpoint not initialized");
   }
   return base_endpoint_;
 }
 
+// handles completion of async_receive_from
 void UdpClient::handle_receive(const boost::system::error_code &error,
                                std::size_t bytes_transferred) {
 
-  // Temporary copy of sender endpoint before checking error/running state
+  // temp copy of sender endpoint before checking error/running state
   udp::endpoint sender_endpoint = receive_endpoint_;
 
-  if (!error && running_.load()) { // Check atomic running flag
+  if (!error && running_.load()) { // check atomic running flag
     std::vector<uint8_t> received_data(
         receive_buffer_.data(), receive_buffer_.data() + bytes_transferred);
 
-    // Get a thread-safe copy of the callback
+    // get thread-safe copy of callback
     std::function<void(const std::vector<uint8_t> &, const udp::endpoint &)>
         callback_copy;
     {
@@ -196,7 +201,7 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
 
     if (callback_copy) {
       try {
-        // Call the user callback WITH the sender endpoint
+        // call user callback with data and sender endpoint
         callback_copy(received_data, sender_endpoint);
       } catch (const std::exception &e) {
         std::cerr << "[ERROR] UdpClient: Exception in receive callback: "
@@ -208,7 +213,7 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
           << std::endl;
     }
 
-    // Issue the next receive operation if still running
+    // issue next receive operation if still running
     if (running_.load()) {
       do_receive();
     }
@@ -216,41 +221,41 @@ void UdpClient::handle_receive(const boost::system::error_code &error,
   } else if (error == boost::asio::error::operation_aborted) {
     std::cout << "[CLIENT] Receive operation aborted (likely due to stop)."
               << std::endl;
-  } else if (running_.load()) { // Check running flag again before logging
+  } else if (running_.load()) { // check running flag again before logging
                                 // error/retrying
     std::cerr << "[ERROR] UdpClient receive error: " << error.message()
               << std::endl;
 
-    // Retry mechanism
-    if (running_.load()) { // Double check running flag
+    // retry mechanism on error
+    if (running_.load()) { // double check running flag
       std::cerr << "[CLIENT] Attempting to restart receiver after delay ("
                 << CLIENT_RETRY_DELAY.count() << "ms)..." << std::endl;
       auto timer = std::make_shared<boost::asio::steady_timer>(
           io_context_, CLIENT_RETRY_DELAY);
       timer->async_wait([this, timer](const boost::system::error_code &ec) {
-        // Check running flag again inside the timer callback
+        // check running flag again inside timer callback
         if (!ec && running_.load()) {
           std::cout << "[CLIENT] Retrying receiver start..." << std::endl;
           do_receive();
         } else if (ec && ec != boost::asio::error::operation_aborted) {
-          // Log timer error only if it's not an abort
+          // log timer error only if not abort
           std::cerr << "[CLIENT] Error waiting for receive retry: "
                     << ec.message() << std::endl;
         }
       });
     }
   }
-  // If !running_, do nothing further.
+  // if !running_, do nothing further
 }
 
+// initiates one async receive operation
 void UdpClient::do_receive() {
-  // Check running flag before issuing async operation
   if (!running_.load())
-    return;
+    return; // check running flag
 
   socket_.async_receive_from(
       boost::asio::buffer(receive_buffer_),
-      receive_endpoint_, // Capture sender's endpoint here
+      receive_endpoint_, // capture sender's endpoint here
       [this](const boost::system::error_code &error,
              std::size_t bytes_transferred) {
         handle_receive(error, bytes_transferred);

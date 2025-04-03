@@ -81,7 +81,7 @@ target_include_directories(rover_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/include/rover
 )
 
-target_link_libraries(rover_lib PUBLIC common base_lib)
+target_link_libraries(rover_lib PUBLIC common base_lib Boost::program_options)
 
 # Rover executable
 add_executable(rover
