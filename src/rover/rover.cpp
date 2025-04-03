@@ -982,3 +982,71 @@ void Rover::handle_packet_timeout(const udp::endpoint &recipient) {
               << recipient << ". Ignoring." << std::endl;
   }
 }
+
+void Rover::handle_session_accept() {
+  std::cout << "[ROVER INTERNAL] Received SESSION_ACCEPT." << std::endl;
+  bool state_updated = false;
+  SessionState previous_state;
+
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    previous_state = session_state_; // Record state before changing
+
+    // Allow transition from HANDSHAKE_INIT or DISCONNECTED (if probe received
+    // ACCEPT)
+    if (session_state_ == SessionState::HANDSHAKE_INIT ||
+        session_state_ == SessionState::DISCONNECTED) {
+      session_state_ = SessionState::HANDSHAKE_ACCEPT;
+      state_updated = true;
+      std::cout << "[ROVER INTERNAL] State updated to HANDSHAKE_ACCEPT (from "
+                << (previous_state == SessionState::DISCONNECTED
+                        ? "DISCONNECTED"
+                        : "HANDSHAKE_INIT")
+                << ")." << std::endl;
+    } else {
+      std::cout << "[ROVER INTERNAL] Ignoring SESSION_ACCEPT received in "
+                   "unexpected state: "
+                << static_cast<int>(session_state_) << std::endl;
+    }
+  } // Lock released
+
+  if (state_updated) {
+    // Cancel timers associated with previous states (INIT or DISCONNECTED
+    // probing)
+    boost::system::error_code ec_handshake, ec_probe;
+    handshake_timer_.cancel(
+        ec_handshake); // Cancel handshake retry timer if it was running
+
+    // Crucially, cancel the probe timer if we were in the DISCONNECTED state
+    if (previous_state == SessionState::DISCONNECTED) {
+      probe_timer_.cancel(ec_probe);
+      if (!ec_probe || ec_probe == boost::asio::error::operation_aborted) {
+        std::cout << "[ROVER INTERNAL] Canceled probe timer upon receiving "
+                     "SESSION_ACCEPT."
+                  << std::endl;
+      } else {
+        std::cerr << "[ROVER INTERNAL] Error cancelling probe timer: "
+                  << ec_probe.message() << std::endl;
+      }
+    }
+
+    // Proceed to confirm the session
+    send_command("SESSION_CONFIRM", rover_id_);
+    std::cout << "[ROVER INTERNAL] Sent SESSION_CONFIRM." << std::endl;
+
+    // Re-arm handshake timer to wait for SESSION_ESTABLISHED
+    // Ensure this runs safely on the io_context thread
+    boost::asio::post(io_context_, [this]() {
+      handshake_timer_.expires_after(HANDSHAKE_TIMEOUT);
+      handshake_timer_.async_wait([this](const boost::system::error_code &ec) {
+        if (!ec) {
+          handle_handshake_timer(); // Handle timeout waiting for ESTABLISHED
+        } else if (ec != boost::asio::error::operation_aborted) {
+          std::cerr
+              << "[ROVER INTERNAL] Handshake timer (wait ESTABLISHED) error: "
+              << ec.message() << std::endl;
+        }
+      });
+    });
+  }
+}
