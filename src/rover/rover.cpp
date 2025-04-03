@@ -19,20 +19,10 @@
 
 namespace {
 
-double approx_distance(double lat1, double lon1, double lat2, double lon2) {
-  double R_moon_meters = 1737400.0; // Mean radius of the Moon in meters
-  double lat1_rad = lat1 * M_PI / 180.0;
-  double lon1_rad = lon1 * M_PI / 180.0;
-  double lat2_rad = lat2 * M_PI / 180.0;
-  double lon2_rad = lon2 * M_PI / 180.0;
-
-  double dLat = (lat2_rad - lat1_rad);
-  double dLon = (lon2_rad - lon1_rad);
-
-  // Simplified equirectangular approximation
-  double x = dLon * std::cos((lat1_rad + lat2_rad) / 2.0);
-  double y = dLat;
-  return R_moon_meters * std::sqrt(x * x + y * y);
+double calculate_distance(double x1, double y1, double x2, double y2) {
+  double dx = x2 - x1;
+  double dy = y2 - y1;
+  return std::sqrt(dx * dx + dy * dy);
 }
 } // namespace
 
@@ -710,9 +700,9 @@ void Rover::handle_internal_command(CommandMessage *cmd_msg,
                   << target_lat << ", Lon=" << target_lon << std::endl;
 
         // Start the movement timer only if not already at the target
-        double dist =
-            approx_distance(current_coordinate_.first,
-                            current_coordinate_.second, target_lat, target_lon);
+        double dist = calculate_distance(current_coordinate_.first,
+                                         current_coordinate_.second, target_lat,
+                                         target_lon);
         if (dist > TARGET_REACHED_THRESHOLD_METERS) {
           boost::system::error_code ec;
           movement_timer_.cancel(ec); // Cancel any previous movement
@@ -1244,26 +1234,30 @@ void Rover::handle_movement_timer() {
       return; // No target, stop.
     }
     target_set = true;
-    target_pos = *target_coordinate_;
-    current_pos = current_coordinate_;
+    target_pos = *target_coordinate_;  // target_pos.first is target_x,
+                                       // target_pos.second is target_y
+    current_pos = current_coordinate_; // current_pos.first is current_x,
+                                       // current_pos.second is current_y
   } // Locks released
 
   if (!target_set)
     return; // Should not happen if logic above is correct
 
-  double current_lat = current_pos.first;
-  double current_lon = current_pos.second;
-  double target_lat = target_pos.first;
-  double target_lon = target_pos.second;
+  double current_x = current_pos.first;
+  double current_y = current_pos.second;
+  double target_x = target_pos.first;
+  double target_y = target_pos.second;
 
-  double distance =
-      approx_distance(current_lat, current_lon, target_lat, target_lon);
+  // Use the new Cartesian distance function
+  double distance_to_target =
+      calculate_distance(current_x, current_y, target_x, target_y);
 
-  std::cout << "[ROVER MOVEMENT] Current: (" << current_lat << ", "
-            << current_lon << "), Target: (" << target_lat << ", " << target_lon
-            << "), Dist: " << distance << "m" << std::endl;
+  std::cout << "[ROVER MOVEMENT] Current: (" << current_x << ", " << current_y
+            << "), Target: (" << target_x << ", " << target_y
+            << "), Dist: " << distance_to_target << "m" << std::endl;
 
-  if (distance <= TARGET_REACHED_THRESHOLD_METERS) {
+  // Check if target is reached
+  if (distance_to_target <= TARGET_REACHED_THRESHOLD_METERS) {
     std::cout << "[ROVER MOVEMENT] Target coordinates reached!" << std::endl;
     { // Lock scope to clear target
       std::lock_guard<std::mutex> lock(target_coord_mutex_);
@@ -1271,11 +1265,12 @@ void Rover::handle_movement_timer() {
     }
 
     // Send notification to base station
+    // Make sure BasicMessage is included if not already
     BasicMessage reached_msg(
         "Rover " + rover_id_ + " reached target coordinates.", rover_id_);
     try {
-      send_message(reached_msg,
-                   get_base_endpoint()); // Assumes session is active to send
+      // Ensure session is active or store message if necessary before sending
+      send_message(reached_msg, get_base_endpoint());
     } catch (const std::exception &e) {
       std::cerr << "[ROVER MOVEMENT] Failed to send TARGET_REACHED message: "
                 << e.what() << std::endl;
@@ -1286,39 +1281,45 @@ void Rover::handle_movement_timer() {
     return; // Stop timer (don't reschedule)
   }
 
-  // Calculate movement step
+  // Calculate movement step distance based on rate (1.0 m/s) and interval (1s)
   double time_step_sec =
       std::chrono::duration<double>(MOVEMENT_INTERVAL).count();
+  // MOVE_RATE_METERS_PER_SECOND should be 1.0 (defined in rover.hpp)
   double step_distance = MOVE_RATE_METERS_PER_SECOND * time_step_sec;
 
-  double bearing = std::atan2(target_lon - current_lon,
-                              target_lat - current_lat); // Simplified bearing
+  // Prevent overshooting the target in this step
+  if (step_distance > distance_to_target) {
+    step_distance = distance_to_target;
+  }
 
-  // Simplified movement - this is NOT geographically accurate for lat/lon
-  // Replace with proper geodesic calculations if high accuracy is needed
-  double R_earth_meters = 6371000.0;
-  double angular_distance = step_distance / R_earth_meters;
+  // Calculate direction vector (normalized)
+  double vector_x = target_x - current_x;
+  double vector_y = target_y - current_y;
 
-  double lat_step =
-      angular_distance * std::cos(bearing); // Change in radians approx
-  double lon_step = angular_distance * std::sin(bearing) /
-                    std::cos(current_lat * M_PI / 180.0); // Approx
+  // Normalize the direction vector
+  // (distance_to_target is checked > threshold earlier, so it won't be exactly
+  // zero here)
+  double direction_x = vector_x / distance_to_target;
+  double direction_y = vector_y / distance_to_target;
 
-  double next_lat = current_lat + (lat_step * 180.0 / M_PI);
-  double next_lon = current_lon + (lon_step * 180.0 / M_PI);
+  // Calculate the next position by moving along the direction vector
+  double next_x = current_x + direction_x * step_distance;
+  double next_y = current_y + direction_y * step_distance;
 
-  // Update position (thread-safe)
-  update_current_position(next_lat, next_lon);
+  // Update position (thread-safe via the existing function)
+  update_current_position(next_x, next_y);
 
-  // Reschedule the timer
+  // Reschedule the timer for the next movement step
   boost::system::error_code ec;
   movement_timer_.expires_at(movement_timer_.expiry() + MOVEMENT_INTERVAL);
   movement_timer_.async_wait([this](const boost::system::error_code &ec) {
-    if (!ec) {
-      handle_movement_timer();
+    if (!ec) {                 // If the timer wasn't cancelled
+      handle_movement_timer(); // Call this function again
     } else if (ec != boost::asio::error::operation_aborted) {
+      // Log error if it wasn't a cancellation
       std::cerr << "[ROVER MOVEMENT] Timer error: " << ec.message()
                 << std::endl;
     }
+    // If operation_aborted, do nothing (timer was cancelled)
   });
 }
