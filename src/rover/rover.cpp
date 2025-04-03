@@ -386,6 +386,13 @@ void Rover::route_message(std::unique_ptr<Message> message,
 
   std::string msg_type = message->get_type();
   std::string sender_id = message->get_sender();
+
+  if (sender_id == rover_id_) {
+    std::cout << "[ROVER INTERNAL] Ignoring message type: '" << msg_type
+              << "' from self (ID: '" << sender_id << "')." << std::endl;
+    return; // Stop processing self-sent messages
+  }
+
   bool from_base_station = false;
   try {
     // Check if sender matches the registered base endpoint
