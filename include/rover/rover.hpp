@@ -313,7 +313,7 @@ private:
   std::deque<StoredPacketData> stored_packets_;
   std::mutex stored_packets_mutex_;
 
-  static constexpr double MOVE_RATE_METERS_PER_SECOND = 0.1;
+  static constexpr double MOVE_RATE_METERS_PER_SECOND = 10000;
   static constexpr std::chrono::milliseconds MOVEMENT_INTERVAL{1000};
   static constexpr double TARGET_REACHED_THRESHOLD_METERS = 0.1;
 

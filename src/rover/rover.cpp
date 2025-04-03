@@ -663,6 +663,8 @@ void Rover::handle_internal_command(CommandMessage *cmd_msg,
   } else if (command == "SESSION_ESTABLISHED") {
     handle_session_established();
   } else if (command == "SET_LOW_POWER") {
+    std::cout << "Received command:";
+    std::cout << Message::pretty_print(cmd_msg->serialise()) << std::endl;
     bool enable = (params == "1");
     { // Lock scope
       std::lock_guard<std::mutex> lock(low_power_mutex_);
@@ -670,9 +672,14 @@ void Rover::handle_internal_command(CommandMessage *cmd_msg,
         low_power_mode_ = enable;
         std::cout << "[ROVER INTERNAL] Low Power Mode "
                   << (enable ? "ENABLED" : "DISABLED") << std::endl;
+      } else {
+        std::cout << "Already " << (enable ? "enabled." : "disabled.")
+                  << std::endl;
       }
     }
   } else if (command == "SET_TARGET_COORD") {
+    std::cout << "Received command:";
+    std::cout << Message::pretty_print(cmd_msg->serialise()) << std::endl;
     std::cout << "[ROVER INTERNAL] Received SET_TARGET_COORD with params: "
               << params << std::endl;
     std::stringstream ss(params);
