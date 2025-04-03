@@ -474,12 +474,16 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
   if (mode_ == ProtocolMode::BASE_STATION) {
     // Check if we already ACKed this sequence to prevent sending duplicate ACKs
     // if the sender retransmits.
+    // BUT resend ACK if there's a duplicate
     if (!reliability_manager_->has_acked_sequence(seq, endpoint)) {
       send_ack(seq, endpoint);
     } else {
       std::cout << "[LUMEN] Ignoring duplicate packet seq: "
                 << static_cast<int>(seq) << " from " << endpoint
-                << " (already ACKed)." << std::endl;
+                << " (already ACKed). Resending ACK." << std::endl;
+
+      // resend the ack in case the precious ACK was lost
+      send_ack(seq, endpoint);
       return; // Do not process duplicate packet further
     }
   }
