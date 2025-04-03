@@ -1,6 +1,7 @@
 // src/rover/rover.cpp
 
 #include "rover.hpp"
+#include "basic_message.hpp"
 #include "command_message.hpp"
 #include "lumen_protocol.hpp"
 #include "message_manager.hpp"
@@ -8,9 +9,32 @@
 #include "telemetry_message.hpp"
 #include <boost/asio/post.hpp>
 #include <chrono>
+#include <cmath>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <sstream>
+
+namespace {
+
+double approx_distance(double lat1, double lon1, double lat2, double lon2) {
+  double R_moon_meters = 1737400.0; // Mean radius of the Moon in meters
+  double lat1_rad = lat1 * M_PI / 180.0;
+  double lon1_rad = lon1 * M_PI / 180.0;
+  double lat2_rad = lat2 * M_PI / 180.0;
+  double lon2_rad = lon2 * M_PI / 180.0;
+
+  double dLat = (lat2_rad - lat1_rad);
+  double dLon = (lon2_rad - lon1_rad);
+
+  // Simplified equirectangular approximation
+  double x = dLon * std::cos((lat1_rad + lat2_rad) / 2.0);
+  double y = dLat;
+  return R_moon_meters * std::sqrt(x * x + y * y);
+}
+} // namespace
 
 namespace { // Use anonymous namespace for internal linkage
 std::string endpoint_to_string(const udp::endpoint &ep) {
@@ -28,10 +52,14 @@ Rover::Rover(boost::asio::io_context &io_context, const std::string &base_host,
              int base_port, const std::string &rover_id)
     : io_context_(io_context), status_timer_(io_context),
       position_telemetry_timer_(io_context), handshake_timer_(io_context),
-      probe_timer_(io_context), // **** ADDED: Initialize probe timer ****
+      probe_timer_(io_context),
+      movement_timer_(io_context), // **** ADDED: Initialize movement timer ****
       session_state_(SessionState::INACTIVE), rover_id_(rover_id),
       current_status_level_(StatusMessage::StatusLevel::OK),
-      current_status_description_("System nominal"), handshake_retry_count_(0) {
+      current_status_description_("System OK"), handshake_retry_count_(0),
+      low_power_mode_(false),           // **** ADDED ****
+      target_coordinate_(std::nullopt), // **** ADDED ****
+      current_coordinate_({0.0, 0.0}) {
   // Initialize communication layers
   client_ = std::make_unique<UdpClient>(
       io_context); // UdpClient handles broadcast setup internally now
@@ -101,6 +129,7 @@ void Rover::stop() {
   handshake_timer_.cancel(ec);
   position_telemetry_timer_.cancel(ec);
   probe_timer_.cancel(ec);
+  movement_timer_.cancel(ec);
 
   // Stop layers in reverse order
   if (client_)
@@ -126,13 +155,17 @@ void Rover::stop() {
   std::cout << "[ROVER] Stopped" << std::endl;
 }
 
-void Rover::update_position(double lat, double lon) {
+void Rover::update_current_position(double lat, double lon) {
   std::lock_guard<std::mutex> lock(position_mutex_);
-  current_latitude_ = lat;
-  current_longitude_ = lon;
+  current_coordinate_ = {lat, lon};
 
   std::cout << "[ROVER] Position updated: Lat=" << lat << ", Lon=" << lon
             << std::endl;
+}
+
+bool Rover::is_low_power_mode() {
+  std::lock_guard<std::mutex> lock(low_power_mutex_);
+  return low_power_mode_;
 }
 
 std::vector<uint8_t> string_to_binary(const std::string &str) {
@@ -194,6 +227,14 @@ void Rover::send_telemetry(const std::map<std::string, double> &readings) {
 
   TelemetryMessage telemetry_msg(readings, rover_id_);
 
+  bool lp_mode = is_low_power_mode();
+  if (lp_mode &&
+      telemetry_msg.get_lumen_priority() != LumenHeader::Priority::HIGH) {
+    std::cout << "[ROVER] Suppressing telemetry message (Low Power Mode)."
+              << std::endl;
+    return; // Don't send or store if low power and not high priority
+  }
+
   if (current_state == SessionState::DISCONNECTED && target_is_base) {
     store_message_for_later(telemetry_msg, base_ep);
   } else if (current_state == SessionState::ACTIVE && target_is_base) {
@@ -249,11 +290,24 @@ void Rover::send_message(const Message &message,
     }
     target_is_base = false; // Assume not base if we can't resolve it
   }
+
+  bool lp_mode = is_low_power_mode();
+  if (lp_mode && message.get_lumen_priority() != LumenHeader::Priority::HIGH) {
+    std::cout << "[ROVER] Suppressing message type " << message.get_type()
+              << " (Low Power Mode)." << std::endl;
+    return; // Don't send or store if low power and not high priority
+  }
+
   if (current_state == SessionState::DISCONNECTED && target_is_base) {
     store_message_for_later(message, target_endpoint);
   } else if (current_state == SessionState::ACTIVE || !target_is_base) {
     // Send if active OR if sending to non-base endpoint (allowed even if
     // disconnected from base)
+    if (lp_mode && !target_is_base) {
+      std::cout << "[ROVER] Suppressing rover-rover message type "
+                << message.get_type() << " (Low Power Mode)." << std::endl;
+      return;
+    }
     if (message_manager_) {
       message_manager_->send_message(message, target_endpoint);
       std::cout << "[ROVER] Sent message type: " << message.get_type()
@@ -283,6 +337,24 @@ void Rover::send_raw_message(const Message &message,
     std::cerr
         << "[ROVER] Error: Invalid recipient endpoint for send_raw_message."
         << std::endl;
+    return;
+  }
+  bool lp_mode = is_low_power_mode();
+  if (lp_mode && message.get_lumen_priority() != LumenHeader::Priority::HIGH) {
+    std::cout << "[ROVER] Suppressing raw message type " << message.get_type()
+              << " (Low Power Mode)." << std::endl;
+    return; // Don't send if low power and not high priority
+  }
+
+  bool target_is_base = false;
+  try {
+    target_is_base = (recipient == get_base_endpoint());
+  } catch (...) { /* Ignore if base endpoint not resolved */
+  }
+
+  if (lp_mode && !target_is_base) {
+    std::cout << "[ROVER] Suppressing raw rover-rover message type "
+              << message.get_type() << " (Low Power Mode)." << std::endl;
     return;
   }
   // Delegate raw sending to MessageManager
@@ -326,6 +398,13 @@ void Rover::send_status() {
   }
 
   StatusMessage status_msg(current_level, current_desc, rover_id_);
+  bool lp_mode = is_low_power_mode();
+  if (lp_mode &&
+      status_msg.get_lumen_priority() != LumenHeader::Priority::HIGH) {
+    std::cout << "[ROVER] Suppressing status message (Low Power Mode)."
+              << std::endl;
+    return; // Don't send or store if low power and not high priority
+  }
 
   if (current_state == SessionState::DISCONNECTED && target_is_base) {
     store_message_for_later(status_msg, base_ep);
@@ -343,6 +422,11 @@ void Rover::send_status() {
 
 // --- Discovery Methods ---
 void Rover::scan_for_rovers(int discovery_port, const std::string &message) {
+  if (is_low_power_mode()) {
+    std::cout << "[ROVER] Suppressing rover scan (Low Power Mode)."
+              << std::endl;
+    return;
+  }
   if (!client_) {
     std::cerr << "[ROVER] Error: Cannot scan, UdpClient is null." << std::endl;
     return;
@@ -445,12 +529,17 @@ void Rover::handle_discovery_command(CommandMessage *cmd_msg,
   }
   // Handle receiving a discovery probe from another rover
   else if (command == "ROVER_DISCOVER") {
-    std::cout << "[ROVER DISCOVERY] Received discovery probe from " << sender_id
-              << ". Sending announcement." << std::endl;
-    // Send our own announcement back directly to the sender using a raw message
-    CommandMessage announce_msg("ROVER_ANNOUNCE", "Responding to probe",
-                                rover_id_);
-    send_raw_message(announce_msg, sender);
+    if (!is_low_power_mode()) {
+      std::cout << "[ROVER DISCOVERY] Sending announcement." << std::endl;
+      CommandMessage announce_msg("ROVER_ANNOUNCE", "Responding to probe",
+                                  rover_id_);
+      // Send raw message (already checks low power mode for rover-rover)
+      send_raw_message(announce_msg, sender);
+    } else {
+      std::cout << "[ROVER DISCOVERY] Suppressing announcement response (Low "
+                   "Power Mode)."
+                << std::endl;
+    }
   }
 }
 
@@ -497,7 +586,8 @@ void Rover::route_message(std::unique_ptr<Message> message,
       const std::string &command = cmd_msg->get_command();
 
       // Session commands (must be from Base Station)
-      if (command == "SESSION_ACCEPT" || command == "SESSION_ESTABLISHED") {
+      if (command == "SESSION_ACCEPT" || command == "SESSION_ESTABLISHED" ||
+          command == "SET_LOW_POWER" || command == "SET_TARGET_COORD") {
         if (from_base_station) {
           handle_internal_command(cmd_msg, sender);
         } else {
@@ -512,7 +602,14 @@ void Rover::route_message(std::unique_ptr<Message> message,
       else if (command == "ROVER_ANNOUNCE" || command == "ROVER_DISCOVER") {
         // Check if message is from self (can happen with broadcast)
         if (sender_id != rover_id_) {
-          handle_discovery_command(cmd_msg, sender);
+          if (!is_low_power_mode()) { // Only handle discovery if not in low
+                                      // power
+            handle_discovery_command(cmd_msg, sender);
+          } else {
+            std::cout << "[ROVER INTERNAL] Ignoring discovery message (Low "
+                         "Power Mode)."
+                      << std::endl;
+          }
         } else {
           std::cout << "[ROVER INTERNAL] Ignoring self-discovery message."
                     << std::endl;
@@ -559,11 +656,80 @@ void Rover::handle_internal_command(CommandMessage *cmd_msg,
   if (!cmd_msg)
     return;
   const std::string &command = cmd_msg->get_command();
+  const std::string &params = cmd_msg->get_params();
 
   if (command == "SESSION_ACCEPT") {
     handle_session_accept();
   } else if (command == "SESSION_ESTABLISHED") {
     handle_session_established();
+  } else if (command == "SET_LOW_POWER") {
+    bool enable = (params == "1");
+    { // Lock scope
+      std::lock_guard<std::mutex> lock(low_power_mutex_);
+      if (low_power_mode_ != enable) {
+        low_power_mode_ = enable;
+        std::cout << "[ROVER INTERNAL] Low Power Mode "
+                  << (enable ? "ENABLED" : "DISABLED") << std::endl;
+      }
+    }
+  } else if (command == "SET_TARGET_COORD") {
+    std::cout << "[ROVER INTERNAL] Received SET_TARGET_COORD with params: "
+              << params << std::endl;
+    std::stringstream ss(params);
+    std::string segment;
+    std::vector<double> coords;
+
+    while (std::getline(ss, segment, ',')) {
+      try {
+        coords.push_back(std::stod(segment));
+      } catch (const std::exception &e) {
+        std::cerr << "[ROVER INTERNAL] Failed to parse coordinate segment '"
+                  << segment << "': " << e.what() << std::endl;
+        coords.clear(); // Invalidate if any part fails
+        break;
+      }
+    }
+
+    if (coords.size() == 2) {
+      double target_lat = coords[0];
+      double target_lon = coords[1];
+      { // Lock scope
+        std::lock_guard<std::mutex> lock_target(target_coord_mutex_);
+        std::lock_guard<std::mutex> lock_pos(
+            position_mutex_); // Lock current pos too
+
+        target_coordinate_ = {target_lat, target_lon};
+        std::cout << "[ROVER INTERNAL] Target coordinate set to: Lat="
+                  << target_lat << ", Lon=" << target_lon << std::endl;
+
+        // Start the movement timer only if not already at the target
+        double dist =
+            approx_distance(current_coordinate_.first,
+                            current_coordinate_.second, target_lat, target_lon);
+        if (dist > TARGET_REACHED_THRESHOLD_METERS) {
+          boost::system::error_code ec;
+          movement_timer_.cancel(ec); // Cancel any previous movement
+          movement_timer_.expires_after(
+              std::chrono::milliseconds(10)); // Start quickly
+          movement_timer_.async_wait(
+              [this](const boost::system::error_code &ec) {
+                if (!ec) {
+                  handle_movement_timer();
+                }
+              });
+          std::cout << "[ROVER INTERNAL] Movement timer started." << std::endl;
+        } else {
+          std::cout << "[ROVER INTERNAL] Already at target coordinate. "
+                       "Movement timer not started."
+                    << std::endl;
+          target_coordinate_ = std::nullopt; // Clear target if already there
+        }
+      }
+    } else {
+      std::cerr
+          << "[ROVER INTERNAL] Invalid format for SET_TARGET_COORD params: "
+          << params << ". Expected 'latitude,longitude'." << std::endl;
+    }
   }
 }
 
@@ -607,7 +773,7 @@ void Rover::initiate_handshake() {
 }
 
 void Rover::handle_handshake_timer() {
-  SessionState current_state;
+  SessionState current_state = SessionState::INACTIVE;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     current_state = session_state_;
@@ -726,13 +892,13 @@ void Rover::handle_session_established() {
 }
 
 void Rover::handle_position_telemetry_timer() {
+  Coordinate current_pos;
   double lat, lon;
   SessionState current_state;
 
   {
     std::lock_guard<std::mutex> lock(position_mutex_);
-    lat = current_latitude_;
-    lon = current_longitude_;
+    current_pos = current_coordinate_;
   }
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
@@ -740,8 +906,8 @@ void Rover::handle_position_telemetry_timer() {
   }
 
   // Attempt to send telemetry. If DISCONNECTED, send_telemetry will queue it.
-  std::map<std::string, double> position_data = {{"latitude", lat},
-                                                 {"longitude", lon}};
+  std::map<std::string, double> position_data = {
+      {"latitude", current_pos.first}, {"longitude", current_pos.second}};
   send_telemetry(position_data);
 
   // Always reschedule the timer as long as the rover is running
@@ -826,6 +992,12 @@ void Rover::send_command(const std::string &command,
     return;
   }
   CommandMessage cmd_msg(command, params, rover_id_);
+  bool lp_mode = is_low_power_mode();
+  if (lp_mode && cmd_msg.get_lumen_priority() != LumenHeader::Priority::HIGH) {
+    std::cout << "[ROVER] Suppressing command '" << command
+              << "' (Low Power Mode)." << std::endl;
+    return; // Don't send or store if low power and not high priority
+  }
   udp::endpoint base_ep;
   try {
     base_ep = get_base_endpoint();
@@ -1047,4 +1219,99 @@ void Rover::handle_session_accept() {
       });
     });
   }
+}
+
+void Rover::handle_movement_timer() {
+  Coordinate target_pos;
+  Coordinate current_pos;
+  bool target_set = false;
+
+  { // Lock scope for target and current position
+    std::lock_guard<std::mutex> lock_target(target_coord_mutex_);
+    std::lock_guard<std::mutex> lock_pos(position_mutex_);
+
+    if (!target_coordinate_) {
+      std::cout
+          << "[ROVER MOVEMENT] Timer fired but no target set. Stopping timer."
+          << std::endl;
+      return; // No target, stop.
+    }
+    target_set = true;
+    target_pos = *target_coordinate_;
+    current_pos = current_coordinate_;
+  } // Locks released
+
+  if (!target_set)
+    return; // Should not happen if logic above is correct
+
+  double current_lat = current_pos.first;
+  double current_lon = current_pos.second;
+  double target_lat = target_pos.first;
+  double target_lon = target_pos.second;
+
+  double distance =
+      approx_distance(current_lat, current_lon, target_lat, target_lon);
+
+  std::cout << "[ROVER MOVEMENT] Current: (" << current_lat << ", "
+            << current_lon << "), Target: (" << target_lat << ", " << target_lon
+            << "), Dist: " << distance << "m" << std::endl;
+
+  if (distance <= TARGET_REACHED_THRESHOLD_METERS) {
+    std::cout << "[ROVER MOVEMENT] Target coordinates reached!" << std::endl;
+    { // Lock scope to clear target
+      std::lock_guard<std::mutex> lock(target_coord_mutex_);
+      target_coordinate_ = std::nullopt; // Clear the target
+    }
+
+    // Send notification to base station
+    BasicMessage reached_msg(
+        "Rover " + rover_id_ + " reached target coordinates.", rover_id_);
+    try {
+      send_message(reached_msg,
+                   get_base_endpoint()); // Assumes session is active to send
+    } catch (const std::exception &e) {
+      std::cerr << "[ROVER MOVEMENT] Failed to send TARGET_REACHED message: "
+                << e.what() << std::endl;
+      // Optionally store for later if disconnected
+      // store_message_for_later(reached_msg, get_base_endpoint());
+    }
+
+    return; // Stop timer (don't reschedule)
+  }
+
+  // Calculate movement step
+  double time_step_sec =
+      std::chrono::duration<double>(MOVEMENT_INTERVAL).count();
+  double step_distance = MOVE_RATE_METERS_PER_SECOND * time_step_sec;
+
+  double bearing = std::atan2(target_lon - current_lon,
+                              target_lat - current_lat); // Simplified bearing
+
+  // Simplified movement - this is NOT geographically accurate for lat/lon
+  // Replace with proper geodesic calculations if high accuracy is needed
+  double R_earth_meters = 6371000.0;
+  double angular_distance = step_distance / R_earth_meters;
+
+  double lat_step =
+      angular_distance * std::cos(bearing); // Change in radians approx
+  double lon_step = angular_distance * std::sin(bearing) /
+                    std::cos(current_lat * M_PI / 180.0); // Approx
+
+  double next_lat = current_lat + (lat_step * 180.0 / M_PI);
+  double next_lon = current_lon + (lon_step * 180.0 / M_PI);
+
+  // Update position (thread-safe)
+  update_current_position(next_lat, next_lon);
+
+  // Reschedule the timer
+  boost::system::error_code ec;
+  movement_timer_.expires_at(movement_timer_.expiry() + MOVEMENT_INTERVAL);
+  movement_timer_.async_wait([this](const boost::system::error_code &ec) {
+    if (!ec) {
+      handle_movement_timer();
+    } else if (ec != boost::asio::error::operation_aborted) {
+      std::cerr << "[ROVER MOVEMENT] Timer error: " << ec.message()
+                << std::endl;
+    }
+  });
 }

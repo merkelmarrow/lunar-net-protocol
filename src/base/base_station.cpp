@@ -468,24 +468,32 @@ void BaseStation::send_command(const std::string &command,
                                const std::string &params) {
   udp::endpoint target_endpoint;
   bool can_send = false;
+  std::string current_rover;
 
   { // State Mutex Lock Scope
     std::lock_guard<std::mutex> lock(state_mutex_);
-    // Commands can usually only be sent when session is ACTIVE.
-    // Allow sending session responses (ACCEPT, ESTABLISHED) during handshake.
+    current_rover = connected_rover_id_;
+
+    bool is_session_command =
+        (command == "SESSION_ACCEPT" || command == "SESSION_ESTABLISHED");
+
     if (session_state_ == SessionState::ACTIVE ||
         (session_state_ == SessionState::HANDSHAKE_ACCEPT &&
          command == "SESSION_ACCEPT") ||
         (session_state_ == SessionState::ACTIVE &&
-         command == "SESSION_ESTABLISHED") // Technically ACTIVE when sending
-                                           // ESTABLISHED
-    ) {
+         command == "SESSION_ESTABLISHED")) {
       if (rover_endpoint_.address().is_unspecified()) {
         std::cerr << "[BASE STATION] Error: Cannot send command '" << command
                   << "'. Rover endpoint is unknown." << std::endl;
       } else {
-        target_endpoint = rover_endpoint_;
-        can_send = true;
+        // Only allow non-session commands if fully ACTIVE
+        if (!is_session_command && session_state_ != SessionState::ACTIVE) {
+          std::cerr << "[BASE STATION] Cannot send command '" << command
+                    << "'. Session must be ACTIVE." << std::endl;
+        } else {
+          target_endpoint = rover_endpoint_;
+          can_send = true;
+        }
       }
     }
   } // State Mutex Lock Released
@@ -494,16 +502,21 @@ void BaseStation::send_command(const std::string &command,
     CommandMessage cmd_msg(command, params,
                            station_id_); // Create message object
     if (message_manager_) {
-      // Delegate sending to MessageManager, specifying the target endpoint
+      std::cout << "[BASE STATION] Sending command '" << command
+                << "' to rover '" << current_rover << "' at " << target_endpoint
+                << std::endl;
       message_manager_->send_message(cmd_msg, target_endpoint);
     } else {
       std::cerr << "[BASE STATION] Error: Cannot send command '" << command
                 << "', MessageManager is null." << std::endl;
     }
   } else {
+
+    SessionState current_state_local = get_session_state(); // Get state safely
     std::cerr << "[BASE STATION] Cannot send command '" << command
-              << "'. Session not in appropriate state ("
-              << static_cast<int>(get_session_state()) << ")." << std::endl;
+              << "'. Session not in appropriate state (Current: "
+              << static_cast<int>(current_state_local)
+              << ", Rover: " << get_connected_rover_id() << ")." << std::endl;
   }
 }
 
@@ -524,6 +537,22 @@ void BaseStation::send_raw_message(const Message &message,
   }
   // Delegate raw sending to MessageManager
   message_manager_->send_raw_message(message, recipient);
+}
+
+void BaseStation::set_low_power_mode(bool enable) {
+  // Command: SET_LOW_POWER
+  // Params: "1" for enable, "0" for disable
+  std::string params = enable ? "1" : "0";
+  send_command("SET_LOW_POWER", params);
+}
+
+void BaseStation::set_rover_target(double latitude, double longitude) {
+  // Command: SET_TARGET_COORD
+  // Params: "latitude,longitude" (e.g., "53.1234,-6.5678")
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(6) << latitude << "," << longitude;
+  std::string params = oss.str();
+  send_command("SET_TARGET_COORD", params);
 }
 
 // Sends a standard application message via the full protocol stack to a

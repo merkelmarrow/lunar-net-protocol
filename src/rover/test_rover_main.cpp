@@ -17,10 +17,11 @@
 
 const int EXTRA_LISTENER_PORT = 60060;
 const int COORD_REQUEST_TARGET_PORT = 50050;
+const int BASE_PORT = 9000;
 
 int main() {
   const std::string BASE_HOST = "10.237.0.201";
-  const int BASE_PORT = 9000;
+
   const std::string ROVER_ID = "grp-18";
 
   try {
@@ -40,8 +41,6 @@ int main() {
 
           // if basic message just print to terminal
           if (message->get_type() == BasicMessage::message_type()) {
-            // Attempt to cast safely - dynamic_cast returns nullptr if cast
-            // fails
             BasicMessage *basic_msg =
                 dynamic_cast<BasicMessage *>(message.get());
             if (basic_msg) {
@@ -52,6 +51,7 @@ int main() {
         });
 
     rover.start();
+    rover.update_current_position(53.3498, -6.2603);
 
     std::cout << "[ROVER MAIN] Rover started. Attempting handshake with "
               << BASE_HOST << ":" << BASE_PORT << "." << std::endl;
@@ -145,18 +145,24 @@ int main() {
         return;
       }
 
-      std::cout << "[Coord Timer] Sending coordinate requests..." << std::endl;
-      for (const auto &ep : received_endpoints) {
-        // Create the target endpoint with the correct port
-        boost::asio::ip::udp::endpoint target_ep(ep.address(),
-                                                 COORD_REQUEST_TARGET_PORT);
+      if (rover.is_low_power_mode()) {
+        std::cout
+            << "[Coord Timer] Skipping coordinate requests (Low Power Mode)."
+            << std::endl;
+      } else {
+        std::cout << "[Coord Timer] Sending coordinate requests..."
+                  << std::endl;
 
-        // Create the command message
-        CommandMessage cmd_msg("SEND_COORDS PLS", "", ROVER_ID);
-        rover.send_raw_message(cmd_msg, target_ep);
+        for (const auto &ep : received_endpoints) {
+          // Create the target endpoint with the correct port
+          boost::asio::ip::udp::endpoint target_ep(ep.address(),
+                                                   COORD_REQUEST_TARGET_PORT);
+
+          CommandMessage cmd_msg("SEND_DATA", "LOCATION", ROVER_ID);
+          rover.send_raw_message(cmd_msg, target_ep);
+        }
       }
 
-      // Reschedule the timer for 10 seconds later
       request_timer.expires_after(std::chrono::seconds(17));
       request_timer.async_wait(request_timer_handler);
     };
@@ -171,10 +177,19 @@ int main() {
         return;
       }
 
-      std::cout << "[Broadcast Timer] Sending periodic broadcast..."
-                << std::endl;
-      extra_listener->scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE",
-                                      ROVER_ID);
+      if (rover.is_low_power_mode()) {
+        std::cout << "[Broadcast Timer] Skipping periodic broadcast (Low "
+                     "Power Mode)."
+                  << std::endl;
+      } else {
+        std::cout << "[Broadcast Timer] Sending periodic broadcast..."
+                  << std::endl;
+
+        if (extra_listener) {
+          extra_listener->scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE",
+                                          ROVER_ID);
+        }
+      }
 
       broadcast_timer.expires_after(std::chrono::seconds(23));
       broadcast_timer.async_wait(broadcast_timer_handler);
@@ -182,25 +197,23 @@ int main() {
 
     broadcast_timer.expires_at(std::chrono::steady_clock::now());
     broadcast_timer.async_wait(broadcast_timer_handler);
-    std::cout << "[ROVER MAIN] Periodic broadcast timer started (60s interval)."
-              << std::endl;
+    std::cout << "[ROVER MAIN] Periodic broadcast timer started." << std::endl;
 
     // Start the timer for the first time
     request_timer.expires_after(std::chrono::seconds(14));
     request_timer.async_wait(request_timer_handler);
-    std::cout << "[ROVER MAIN] Coordinate request timer started (10s interval)."
-              << std::endl;
+    std::cout << "[ROVER MAIN] Coordinate request timer started." << std::endl;
 
     boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
     signals.async_wait(
         [&](const boost::system::error_code &, int /*signal_number*/) {
           std::cout << "Interrupt signal received. Stopping..." << std::endl;
           request_timer.cancel();
+          broadcast_timer.cancel();
           if (extra_listener)
             extra_listener->stop();
           if (coords_listener)
             coords_listener->stop();
-          broadcast_timer.cancel();
           rover.stop();
           io_context.stop();
         });

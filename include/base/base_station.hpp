@@ -78,6 +78,9 @@ public:
    */
   ~BaseStation();
 
+  void set_low_power_mode(bool enable);
+  void set_rover_target(double latitude, double longitude);
+
   // Prevent copying and assignment
   BaseStation(const BaseStation &) = delete;
   BaseStation &operator=(const BaseStation &) = delete;

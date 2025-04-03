@@ -19,6 +19,7 @@ class StatusMessage;
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -48,6 +49,8 @@ public:
     ACTIVE, ///< Handshake complete, session is active with the base station.
     DISCONNECTED
   };
+
+  using Coordinate = std::pair<double, double>;
 
   /**
    * @typedef ApplicationMessageHandler
@@ -206,7 +209,8 @@ public:
    */
   void send_command(const std::string &command, const std::string &params);
 
-  void update_position(double lat, double lon);
+  void update_current_position(double lat, double lon);
+  bool is_low_power_mode();
   void handle_position_telemetry_timer();
 
 private:
@@ -254,6 +258,7 @@ private:
   void handle_handshake_timer();
   void handle_status_timer();
   void handle_probe_timer();
+  void handle_movement_timer();
 
   // --- Core Components ---
   boost::asio::io_context &io_context_;
@@ -266,6 +271,7 @@ private:
   boost::asio::steady_timer handshake_timer_;
   boost::asio::steady_timer position_telemetry_timer_;
   boost::asio::steady_timer probe_timer_;
+  boost::asio::steady_timer movement_timer_;
 
   // --- Callbacks ---
   ApplicationMessageHandler application_message_handler_ = nullptr;
@@ -278,6 +284,8 @@ private:
   std::string current_status_description_;
   int handshake_retry_count_;
   std::map<std::string, udp::endpoint> discovered_rovers_;
+  bool low_power_mode_ = false;
+  std::optional<Coordinate> target_coordinate_ = std::nullopt;
 
   // --- Thread Safety ---
   mutable std::mutex state_mutex_;
@@ -286,6 +294,8 @@ private:
   mutable std::mutex discovery_mutex_;
   std::mutex discovery_handler_mutex_;
   std::mutex position_mutex_;
+  std::mutex target_coord_mutex_;
+  std::mutex low_power_mutex_;
 
   // --- Constants ---
   static constexpr int MAX_HANDSHAKE_RETRIES = 5;
@@ -294,8 +304,7 @@ private:
   static constexpr std::chrono::seconds POSITION_TELEMETRY_INTERVAL{10};
 
   // position data
-  double current_latitude_ = 0.0;
-  double current_longitude_ = 0.0;
+  Coordinate current_coordinate_ = {0.0, 0.0};
 
   // Store serialized payload and protocol metadata needed for resending
   using StoredPacketData =
@@ -303,6 +312,10 @@ private:
                  LumenHeader::Priority, udp::endpoint>;
   std::deque<StoredPacketData> stored_packets_;
   std::mutex stored_packets_mutex_;
+
+  static constexpr double MOVE_RATE_METERS_PER_SECOND = 0.1;
+  static constexpr std::chrono::milliseconds MOVEMENT_INTERVAL{1000};
+  static constexpr double TARGET_REACHED_THRESHOLD_METERS = 0.1;
 
   static constexpr std::chrono::seconds PROBE_INTERVAL{5};
 };
