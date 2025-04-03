@@ -323,41 +323,65 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
   while (!buffer.empty()) {
     // LumenPacket::from_bytes checks for STX, valid header, length, CRC, and
     // ETX.
-    auto packet_opt = LumenPacket::from_bytes(buffer);
+    auto packet_opt = LumenPacket::from_bytes(
+        buffer); // Attempts full parse including CRC check
 
     // If not enough data or packet is invalid (STX, ETX, CRC error etc.)
     if (!packet_opt) {
-      size_t stx_pos = std::string::npos; // Use std::string::npos for clarity
-      for (size_t i = 0; i < buffer.size(); ++i) {
-        if (buffer[i] == LUMEN_STX) {
-          stx_pos = i;
+      // Try parsing just the header to see if we can determine the expected
+      // size.
+      auto header_opt = LumenHeader::from_bytes(buffer);
+      if (header_opt) {
+        // Header was parsable, maybe the payload/CRC/ETX is bad.
+        LumenHeader header = *header_opt;
+        size_t expected_total_size = LUMEN_HEADER_SIZE +
+                                     header.get_payload_length() +
+                                     2; // Header + Payload + CRC + ETX
+
+        // If we have enough data for the *declared* size, discard that chunk.
+        // This prevents repeatedly trying to parse the same corrupt packet.
+        if (buffer.size() >= expected_total_size) {
+          std::cerr << "[LUMEN] Discarding " << expected_total_size
+                    << " bytes from buffer for " << endpoint_key
+                    << " due to packet parse failure (likely CRC/ETX error)."
+                    << std::endl;
+          buffer.erase(buffer.begin(), buffer.begin() + expected_total_size);
+          continue; // Try processing the rest of the buffer
+        } else {
+          // Not enough data for the declared size, wait for more.
           break;
         }
-      }
-
-      if (stx_pos != std::string::npos && stx_pos > 0) {
-        // Found STX later in the buffer, discard bytes before it
-        std::cerr << "[LUMEN] Discarding " << stx_pos
-                  << " bytes from buffer for " << endpoint_key
-                  << " before potential STX." << std::endl;
-        buffer.erase(buffer.begin(), buffer.begin() + stx_pos);
-        // Try parsing again in the next loop iteration
-        continue;
-      } else if (stx_pos == std::string::npos) {
-        // No STX found at all, clear buffer if large or wait for more data if
-        // small
-        if (buffer.size() > MAX_FRAME_BUFFER_SIZE / 2) { // Heuristic
-          std::cerr << "[LUMEN] No STX found in large buffer for "
-                    << endpoint_key << ". Clearing " << buffer.size()
-                    << " bytes." << std::endl;
-          buffer.clear();
-        }
-        // If buffer is small and no STX, just break and wait for more data
-        break;
       } else {
-        // STX is at buffer[0], but from_bytes failed (incomplete packet or bad
-        // format)
-        break; // Wait for more data
+        // Even the header is bad (e.g., missing STX at start, too short).
+        // Fallback: Find the *next* STX and discard everything before it.
+        size_t next_stx_pos = std::string::npos;
+        for (size_t i = 1; i < buffer.size();
+             ++i) { // Start search from index 1
+          if (buffer[i] == LUMEN_STX) {
+            next_stx_pos = i;
+            break;
+          }
+        }
+
+        if (next_stx_pos != std::string::npos) {
+          std::cerr << "[LUMEN] Discarding " << next_stx_pos
+                    << " bytes from buffer for " << endpoint_key
+                    << " due to unparsable header/data before next STX."
+                    << std::endl;
+          buffer.erase(buffer.begin(), buffer.begin() + next_stx_pos);
+          continue; // Try processing from the next STX
+        } else {
+          // No STX found at all, or only at the very beginning but header
+          // failed.
+          if (buffer.size() > MAX_FRAME_BUFFER_SIZE / 2) { // Heuristic
+            std::cerr << "[LUMEN] No valid STX found in large buffer for "
+                      << endpoint_key << ". Clearing " << buffer.size()
+                      << " bytes." << std::endl;
+            buffer.clear();
+          }
+          // If buffer is small and no next STX, just wait for more data.
+          break;
+        }
       }
     }
 
@@ -369,6 +393,9 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
     if (packet_size <= buffer.size()) {
       buffer.erase(buffer.begin(), buffer.begin() + packet_size);
     } else {
+      // This case should ideally not happen if from_bytes succeeded and checks
+      // lengths correctly. If it does, it indicates a logic error somewhere.
+      // Clear buffer to prevent loops.
       std::cerr << "[LUMEN] Internal error: Packet size (" << packet_size
                 << ") > buffer size (" << buffer.size()
                 << ") after successful parse for " << endpoint_key
