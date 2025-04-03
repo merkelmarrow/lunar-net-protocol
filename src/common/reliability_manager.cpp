@@ -280,46 +280,32 @@ ReliabilityManager::get_packets_to_retransmit() {
         }
 
         if (timeout_to_base) {
-          consecutive_timeouts_to_base_++;
-          std::cout << "[RELIABILITY] Timeout to Base detected for seq: "
-                    << static_cast<int>(seq) << ". Consecutive timeouts: "
-                    << consecutive_timeouts_to_base_ << std::endl;
+          std::cerr << "[RELIABILITY] Max retries (" << RELIABILITY_MAX_RETRIES
+                    << ") reached for packet seq: " << static_cast<int>(seq)
+                    << " to Base Station. Notifying Rover to disconnect."
+                    << std::endl;
 
-          if (consecutive_timeouts_to_base_ >= 3) {
-            std::cerr << "[RELIABILITY] Max retries ("
-                      << RELIABILITY_MAX_RETRIES
-                      << ") reached for packet seq: " << static_cast<int>(seq)
-                      << " AND consecutive timeout threshold reached. "
-                         "Notifying Rover."
+          // Get callback copy safely
+          TimeoutCallback callback_copy;
+          {
+            std::lock_guard<std::mutex> cb_lock(timeout_callback_mutex_);
+            callback_copy = timeout_callback_;
+          }
+
+          if (callback_copy) {
+            try {
+              callback_copy(info.recipient); // Notify Rover about the timeout
+            } catch (const std::exception &e) {
+              std::cerr << "[RELIABILITY] Error in timeout callback: "
+                        << e.what() << std::endl;
+            }
+          } else {
+            std::cerr << "[RELIABILITY] Error: Max retries reached for base, "
+                         "but timeout callback is not set!"
                       << std::endl;
-
-            // Get callback copy safely
-            TimeoutCallback callback_copy;
-            {
-              std::lock_guard<std::mutex> cb_lock(timeout_callback_mutex_);
-              callback_copy = timeout_callback_;
-            }
-
-            // Trigger timeout notification callback
-            if (callback_copy) {
-              try {
-                callback_copy(info.recipient); // Notify Rover about the
-                                               // persistent timeout
-              } catch (const std::exception &e) {
-                std::cerr << "[RELIABILITY] Error in timeout callback: "
-                          << e.what() << std::endl;
-              }
-            } else {
-              std::cerr << "[RELIABILITY] Error: Timeout threshold reached but "
-                           "timeout callback is not set!"
-                        << std::endl;
-            }
-            consecutive_timeouts_to_base_ =
-                0; // Reset counter after notification
           }
         } else {
-          // Timeout to non-base endpoint (e.g., another rover) - just log
-          // giving up.
+          // Max retries reached for a non-base recipient
           std::cerr << "[RELIABILITY] Max retries (" << RELIABILITY_MAX_RETRIES
                     << ") reached for packet seq: " << static_cast<int>(seq)
                     << " to non-base recipient " << info.recipient

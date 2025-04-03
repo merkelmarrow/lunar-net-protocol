@@ -42,7 +42,7 @@ constexpr size_t LUMEN_HEADER_SIZE =
 
 // --- Reliability Manager Constants (General) ---
 constexpr int RELIABILITY_MAX_RETRIES =
-    5; ///< Max retransmission attempts (Rover only).
+    2; ///< Max retransmission attempts (Rover only).
 constexpr std::chrono::milliseconds RELIABILITY_BASE_TIMEOUT{
     5000}; ///< Initial timeout before first retry (Rover only). Timeout doubles
            ///< with each retry.
