@@ -18,7 +18,8 @@ ReliabilityManager::ReliabilityManager(boost::asio::io_context &io_context,
     : // Initialize timers with their respective intervals
       retransmit_timer_(io_context, RELIABILITY_CHECK_INTERVAL),
       cleanup_timer_(io_context, CLEANUP_INTERVAL), running_(false),
-      role_(is_base_station ? Role::BASE_STATION : Role::ROVER) {
+      role_(is_base_station ? Role::BASE_STATION : Role::ROVER),
+      consecutive_timeouts_to_base_(0) {
 
   std::cout << "[RELIABILITY] Manager created with role: "
             << (is_base_station ? "BASE_STATION" : "ROVER") << std::endl;
@@ -37,6 +38,9 @@ void ReliabilityManager::start() {
     std::lock_guard<std::mutex> lock(sent_packets_mutex_);
     sent_packets_.clear();
   }
+
+  consecutive_timeouts_to_base_ = 0;
+
   {
     std::lock_guard<std::mutex> lock(received_sequences_mutex_);
     received_sequences_.clear();
@@ -100,6 +104,7 @@ void ReliabilityManager::process_ack(uint8_t seq) {
   auto it = sent_packets_.find(seq);
   if (it != sent_packets_.end()) {
     // Packet acknowledged, remove it from tracking. No need to retransmit.
+    consecutive_timeouts_to_base_ = 0;
     sent_packets_.erase(it);
   } else {
     // This can happen if the ACK arrives after the packet was already
@@ -269,6 +274,57 @@ ReliabilityManager::get_packets_to_retransmit() {
     if (elapsed > timeout) {
       // Timeout exceeded. Check if max retries have been reached.
       if (info.retry_count >= RELIABILITY_MAX_RETRIES) {
+        bool timeout_to_base = false;
+        if (info.recipient.port() == 9000) { // risky temporary assumption
+          timeout_to_base = true;
+        }
+
+        if (timeout_to_base) {
+          consecutive_timeouts_to_base_++;
+          std::cout << "[RELIABILITY] Timeout to Base detected for seq: "
+                    << static_cast<int>(seq) << ". Consecutive timeouts: "
+                    << consecutive_timeouts_to_base_ << std::endl;
+
+          if (consecutive_timeouts_to_base_ >= 3) {
+            std::cerr << "[RELIABILITY] Max retries ("
+                      << RELIABILITY_MAX_RETRIES
+                      << ") reached for packet seq: " << static_cast<int>(seq)
+                      << " AND consecutive timeout threshold reached. "
+                         "Notifying Rover."
+                      << std::endl;
+
+            // Get callback copy safely
+            TimeoutCallback callback_copy;
+            {
+              std::lock_guard<std::mutex> cb_lock(timeout_callback_mutex_);
+              callback_copy = timeout_callback_;
+            }
+
+            // Trigger timeout notification callback
+            if (callback_copy) {
+              try {
+                callback_copy(info.recipient); // Notify Rover about the
+                                               // persistent timeout
+              } catch (const std::exception &e) {
+                std::cerr << "[RELIABILITY] Error in timeout callback: "
+                          << e.what() << std::endl;
+              }
+            } else {
+              std::cerr << "[RELIABILITY] Error: Timeout threshold reached but "
+                           "timeout callback is not set!"
+                        << std::endl;
+            }
+            consecutive_timeouts_to_base_ =
+                0; // Reset counter after notification
+          }
+        } else {
+          // Timeout to non-base endpoint (e.g., another rover) - just log
+          // giving up.
+          std::cerr << "[RELIABILITY] Max retries (" << RELIABILITY_MAX_RETRIES
+                    << ") reached for packet seq: " << static_cast<int>(seq)
+                    << " to non-base recipient " << info.recipient
+                    << ". Giving up." << std::endl;
+        }
         std::cerr << "[RELIABILITY] Max retries (" << RELIABILITY_MAX_RETRIES
                   << ") reached for packet seq: " << static_cast<int>(seq)
                   << ". Giving up." << std::endl;
@@ -302,6 +358,11 @@ void ReliabilityManager::set_retransmit_callback(
     std::function<void(const LumenPacket &, const udp::endpoint &)> callback) {
   std::lock_guard<std::mutex> lock(callback_mutex_);
   retransmit_callback_ = std::move(callback);
+}
+
+void ReliabilityManager::set_timeout_callback(TimeoutCallback callback) {
+  std::lock_guard<std::mutex> lock(timeout_callback_mutex_);
+  timeout_callback_ = std::move(callback);
 }
 
 // Periodic timer handler, primarily for Rover's timeout-based retransmissions.

@@ -116,6 +116,9 @@ public:
    */
   void process_nak(uint8_t seq);
 
+  using TimeoutCallback = std::function<void(const udp::endpoint &recipient)>;
+  void set_timeout_callback(TimeoutCallback callback);
+
   /**
    * @brief Records that a packet with a specific sequence number was received
    * from a sender. Used primarily by the Rover to track sequences for gap
@@ -269,4 +272,10 @@ private:
   std::chrono::steady_clock::time_point last_ack_cleanup_time_{};
 
   static constexpr uint8_t WINDOW_SIZE = 16;
+
+  TimeoutCallback timeout_callback_ =
+      nullptr;                        ///< Callback for max retry notification.
+  std::mutex timeout_callback_mutex_; ///< Mutex for timeout_callback_.
+  int consecutive_timeouts_to_base_ =
+      0; ///< Counter for consecutive timeouts to base (Rover role).
 };

@@ -61,6 +61,7 @@ public:
     ROVER ///< Operates as a client, expects ACKs for sent data, sends NAKs for
           ///< missing data.
   };
+  void set_timeout_callback(ReliabilityManager::TimeoutCallback callback);
 
   /**
    * @brief Constructor for BASE_STATION mode.

@@ -14,11 +14,14 @@ class StatusMessage;
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <tuple>
+#include <vector>
 
 using boost::asio::ip::udp;
 
@@ -42,7 +45,8 @@ public:
     HANDSHAKE_INIT,   ///< Sent SESSION_INIT, waiting for SESSION_ACCEPT.
     HANDSHAKE_ACCEPT, ///< Received SESSION_ACCEPT, sent SESSION_CONFIRM,
                       ///< waiting for SESSION_ESTABLISHED.
-    ACTIVE ///< Handshake complete, session is active with the base station.
+    ACTIVE, ///< Handshake complete, session is active with the base station.
+    DISCONNECTED
   };
 
   /**
@@ -216,6 +220,12 @@ private:
   void route_message(std::unique_ptr<Message> message,
                      const udp::endpoint &sender);
 
+  void handle_base_disconnect();
+  void handle_packet_timeout(const udp::endpoint &recipient);
+  void send_stored_packets();
+  void store_message_for_later(const Message &message,
+                               const udp::endpoint &intended_recipient);
+
   /**
    * @brief Internal handler for specific command messages received from the
    * Base Station (SESSION_ACCEPT, SESSION_ESTABLISHED).
@@ -243,6 +253,7 @@ private:
   // --- Timer Handlers ---
   void handle_handshake_timer();
   void handle_status_timer();
+  void handle_probe_timer();
 
   // --- Core Components ---
   boost::asio::io_context &io_context_;
@@ -254,6 +265,7 @@ private:
   boost::asio::steady_timer status_timer_;
   boost::asio::steady_timer handshake_timer_;
   boost::asio::steady_timer position_telemetry_timer_;
+  boost::asio::steady_timer probe_timer_;
 
   // --- Callbacks ---
   ApplicationMessageHandler application_message_handler_ = nullptr;
@@ -284,4 +296,13 @@ private:
   // position data
   double current_latitude_ = 0.0;
   double current_longitude_ = 0.0;
+
+  // Store serialized payload and protocol metadata needed for resending
+  using StoredPacketData =
+      std::tuple<std::vector<uint8_t>, LumenHeader::MessageType,
+                 LumenHeader::Priority, udp::endpoint>;
+  std::deque<StoredPacketData> stored_packets_;
+  std::mutex stored_packets_mutex_;
+
+  static constexpr std::chrono::seconds PROBE_INTERVAL{5};
 };

@@ -40,6 +40,13 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
   std::cout << "[LUMEN] Created protocol in BASE_STATION mode" << std::endl;
 }
 
+void LumenProtocol::set_timeout_callback(
+    ReliabilityManager::TimeoutCallback callback) {
+  if (reliability_manager_) {
+    reliability_manager_->set_timeout_callback(std::move(callback));
+  }
+}
+
 LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
                              UdpClient &client)
     : mode_(ProtocolMode::ROVER), server_(nullptr), client_(&client),
