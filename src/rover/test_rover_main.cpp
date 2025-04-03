@@ -2,6 +2,7 @@
 #include "command_message.hpp"
 #include "message.hpp"
 #include "rover.hpp"
+#include "telemetry_message.hpp"
 #include "udp_server.hpp"
 
 #include <boost/asio.hpp>
@@ -58,6 +59,8 @@ int main() {
     std::vector<boost::asio::ip::udp::endpoint> received_endpoints;
     auto extra_listener =
         std::make_shared<UdpServer>(io_context, EXTRA_LISTENER_PORT);
+    auto coords_listener =
+        std::make_shared<UdpServer>(io_context, COORD_REQUEST_TARGET_PORT);
 
     extra_listener->set_receive_callback(
         [&rover, &received_endpoints,
@@ -92,10 +95,37 @@ int main() {
           std::cout << "-> \"Acknowledged. We are group 18.\"\n";
           rover.send_raw_message(response_msg, sender);
         });
+    coords_listener->set_receive_callback(
+        [&rover, &received_endpoints,
+         &ROVER_ID](const std::vector<uint8_t> &data,
+                    const boost::asio::ip::udp::endpoint &sender) {
+          std::cout << "[Listener " << COORD_REQUEST_TARGET_PORT
+                    << "] Received " << data.size() << " bytes from " << sender
+                    << std::endl;
+
+          std::string received_msg(data.begin(), data.end());
+          std::cout << "[Listener " << EXTRA_LISTENER_PORT
+                    << "] Raw Message: " << received_msg << std::endl;
+
+          std::map<std::string, double> location = {{"latitude", 53.3498},
+                                                    {"longitude", -6.2603}};
+
+          TelemetryMessage location_msg(location, ROVER_ID);
+
+          std::cout << "[Listener " << EXTRA_LISTENER_PORT
+                    << "] Sending location message back to " << sender
+                    << std::endl;
+          rover.send_raw_message(location_msg, sender);
+        });
 
     extra_listener->start();
+    coords_listener->start();
+
     std::cout << "[ROVER MAIN] Started extra listener on port "
               << EXTRA_LISTENER_PORT << "." << std::endl;
+
+    std::cout << "[ROVER MAIN] Started coords listener on port "
+              << COORD_REQUEST_TARGET_PORT << "." << std::endl;
 
     // Coordinate request timer
     boost::asio::steady_timer request_timer(io_context);
@@ -168,6 +198,8 @@ int main() {
           request_timer.cancel();
           if (extra_listener)
             extra_listener->stop();
+          if (coords_listener)
+            coords_listener->stop();
           broadcast_timer.cancel();
           rover.stop();
           io_context.stop();
