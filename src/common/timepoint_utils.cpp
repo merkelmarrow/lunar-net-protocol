@@ -2,20 +2,19 @@
 
 #include "timepoint_utils.hpp"
 
-#include <chrono>    // For std::chrono types and parse
-#include <format>    // For std::format (requires C++20)
-#include <iostream>  // For error logging (cerr)
-#include <sstream>   // For string stream used by std::chrono::parse
-#include <stdexcept> // For std::runtime_error
+#include <chrono>
+#include <format> // requires c++20
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
 
 namespace tp_utils {
 
 std::string tp_to_string(const std::chrono::system_clock::time_point &tp) {
   try {
-    // Format as ISO 8601 date and time with timezone offset (requires C++20)
+    // format as iso 8601 date and time with timezone offset (requires c++20)
     return std::format("{:%FT%T%z}", tp);
   } catch (const std::format_error &e) {
-    // Log error if formatting fails
     std::cerr << "[ERROR] Failed to format time_point: " << e.what()
               << std::endl;
     return "TimeFormatError";
@@ -28,31 +27,30 @@ string_to_tp(const std::string &time_str) {
   std::istringstream ss(time_str);
 
   try {
-    // Attempt to parse common ISO 8601 formats with timezone (requires C++20)
-    // Try format with numeric offset first (e.g., +0100)
+    // attempt parse common iso 8601 formats with timezone (requires c++20)
+    // try format with numeric offset first (e.g., +0100)
     if (ss >> std::chrono::parse("%FT%T%z", result); !ss.fail()) {
       return result;
     }
 
-    // Reset stream state and try UTC format 'Z'
-    ss.clear();  // Clear fail bits
-    ss.seekg(0); // Reset position to beginning
+    // reset stream state and try utc format 'z'
+    ss.clear();  // clear fail bits
+    ss.seekg(0); // reset position
 
     if (ss >> std::chrono::parse("%FT%T%Z", result); !ss.fail()) {
       return result;
     }
 
-    // If all attempts fail, throw an error
+    // if all attempts fail, throw error
     throw std::runtime_error("Timestamp format not recognized or parse failed "
                              "(tried %FT%T%z and %FT%T%Z).");
 
   } catch (const std::exception &e) {
-    // Catch errors from parsing or the explicit throw above
+    // catch errors from parsing or explicit throw
     std::cerr << "[ERROR] Failed to parse timestamp string '" << time_str
               << "' using std::chrono::parse. Error: " << e.what() << std::endl;
     std::cerr << "[WARN] Using current time as fallback." << std::endl;
-    return std::chrono::system_clock::now(); // Return current time as a
-                                             // fallback
+    return std::chrono::system_clock::now(); // return current time as fallback
   }
 }
 
