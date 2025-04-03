@@ -234,6 +234,15 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
   }
 }
 
+// Set the handler for general application messages (non-internal)
+void BaseStation::set_application_message_handler(
+    ApplicationMessageHandler handler) {
+  std::lock_guard<std::mutex> lock(handler_mutex_);
+  application_message_handler_ = std::move(handler);
+  std::cout << "[BASE STATION] Application message handler registered."
+            << std::endl;
+}
+
 // Handles internal session-related commands
 void BaseStation::handle_internal_command(CommandMessage *cmd_msg,
                                           const udp::endpoint &sender) {
