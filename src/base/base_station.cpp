@@ -38,8 +38,10 @@ BaseStation::~BaseStation() {
 void BaseStation::start() {
   if (message_manager_)
     message_manager_->start();
-  if (protocol_)
+  if (protocol_) {
     protocol_->start();
+    protocol_->set_session_active(false); // Ensure inactive on start
+  }
   if (server_)
     server_->start(); // Start server last (innermost layer)
 
@@ -61,6 +63,9 @@ void BaseStation::start() {
 }
 
 void BaseStation::stop() {
+  if (protocol_) {
+    protocol_->set_session_active(false);
+  }
   // Stop layers in reverse order of initialization/start
   if (server_)
     server_->stop();
@@ -78,15 +83,6 @@ void BaseStation::stop() {
   }
 
   std::cout << "[BASE STATION] Stopped" << std::endl;
-}
-
-// Set the handler for general application messages (non-internal)
-void BaseStation::set_application_message_handler(
-    ApplicationMessageHandler handler) {
-  std::lock_guard<std::mutex> lock(handler_mutex_);
-  application_message_handler_ = std::move(handler);
-  std::cout << "[BASE STATION] Application message handler registered."
-            << std::endl;
 }
 
 // Set a specific handler for Status/Telemetry messages
@@ -315,8 +311,6 @@ void BaseStation::handle_internal_telemetry(TelemetryMessage *telemetry_msg,
 
 // --- Session Management Implementation ---
 
-// src/base/base_station.cpp
-
 void BaseStation::handle_session_init(const std::string &rover_id,
                                       const udp::endpoint &sender) {
   std::cout << "[BASE INTERNAL] Received SESSION_INIT from rover ID: '"
@@ -346,28 +340,35 @@ void BaseStation::handle_session_init(const std::string &rover_id,
   }
 
   bool send_accept = false;
+  bool reset_session =
+      false; // Flag if we are resetting due to collision/re-init
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
 
-    // Check for existing session collision with a *different* rover
     if (session_state_ != SessionState::INACTIVE &&
         connected_rover_id_ != rover_id) {
       std::cout << "[BASE INTERNAL] Rejecting SESSION_INIT from '" << rover_id
                 << "'. Already in session with '" << connected_rover_id_ << "'."
                 << std::endl;
-      // Consider sending a SESSION_REJECT command if defined.
-      return; // Reject new session attempt
+      reset_session = (session_state_ == SessionState::ACTIVE);
     }
 
-    // Handle cases: New connection, or re-initiation from same rover during
-    // inactive/handshake states
-    if (connected_rover_id_ == rover_id || connected_rover_id_.empty()) {
+    else if (connected_rover_id_ == rover_id || connected_rover_id_.empty()) {
       // Allow re-initiation if inactive, during handshake, or potentially from
       // a changed endpoint
-      if (connected_rover_id_ == rover_id && rover_endpoint_ != sender) {
+      if (session_state_ == SessionState::ACTIVE &&
+          connected_rover_id_ == rover_id) {
+        // Re-initiation while active: treat as a reset
+        reset_session = true;
+        std::cout << "[BASE INTERNAL] Rover '" << rover_id
+                  << "' re-initiating session while ACTIVE. Resetting state."
+                  << std::endl;
+      } else if (connected_rover_id_ == rover_id && rover_endpoint_ != sender) {
         std::cout << "[BASE INTERNAL] Rover '" << rover_id
                   << "' re-initiating session from new endpoint: " << sender
                   << "." << std::endl;
+        if (session_state_ == SessionState::ACTIVE)
+          reset_session = true; // Reset if was active
       } else if (session_state_ == SessionState::INACTIVE) {
         std::cout << "[BASE INTERNAL] New session initiation from '" << rover_id
                   << "'." << std::endl;
@@ -376,6 +377,8 @@ void BaseStation::handle_session_init(const std::string &rover_id,
             << "[BASE INTERNAL] Rover '" << rover_id
             << "' re-initiating session from same endpoint while in state "
             << static_cast<int>(session_state_) << "." << std::endl;
+        if (session_state_ == SessionState::ACTIVE)
+          reset_session = true; // Reset if was active
       }
 
       // Update state and store initiating rover's details
@@ -387,15 +390,24 @@ void BaseStation::handle_session_init(const std::string &rover_id,
       std::cout << "[BASE INTERNAL] State set to HANDSHAKE_ACCEPT. Stored "
                    "rover endpoint: "
                 << rover_endpoint_ << std::endl;
+    } else {
+      reset_session = (session_state_ ==
+                       SessionState::ACTIVE); // ensure reset if we were active
     }
+  }
 
-  } // State Mutex Lock Released
+  if (reset_session && protocol_) {
+    protocol_->set_session_active(false);
+  }
 
   // Send SESSION_ACCEPT back to the initiating rover if flagged
   if (send_accept) {
     send_command("SESSION_ACCEPT", station_id_);
     std::cout << "[BASE INTERNAL] Sent SESSION_ACCEPT to rover '" << rover_id
               << "' at " << sender << "." << std::endl;
+  } else if (reset_session) {
+    std::cout << "[BASE INTERNAL] Session initiation from '" << rover_id
+              << "' rejected or caused reset." << std::endl;
   }
 }
 
@@ -427,6 +439,10 @@ void BaseStation::handle_session_confirm(const std::string &rover_id,
 
     std::cout << "[BASE INTERNAL] Session ACTIVE with rover: '"
               << connected_rover_id_ << "' at " << rover_endpoint_ << std::endl;
+
+    if (protocol_) {
+      protocol_->set_session_active(true);
+    }
 
   } // State Mutex Lock Released
 

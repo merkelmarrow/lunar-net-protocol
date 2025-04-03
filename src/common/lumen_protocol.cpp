@@ -452,7 +452,6 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
             << ", size: " << payload.size() << " from " << endpoint
             << std::endl;
 
-  // Track every received sequence number for gap detection (in Rover mode)
   reliability_manager_->record_received_sequence(seq, endpoint);
 
   // --- Handle Control Packets (ACK/NAK) ---
@@ -460,7 +459,7 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     // Rover expects ACKs from the Base Station
     if (mode_ == ProtocolMode::ROVER && payload.size() >= 1) {
       uint8_t acked_seq = payload[0]; // ACK payload contains the sequence
-                                      // number being acknowledged
+      // number being acknowledged
       std::cout << "[LUMEN] Processing ACK for original seq: "
                 << static_cast<int>(acked_seq) << std::endl;
       reliability_manager_->process_ack(acked_seq);
@@ -476,7 +475,7 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
     // Base Station expects NAKs from the Rover
     if (mode_ == ProtocolMode::BASE_STATION && payload.size() >= 1) {
       uint8_t requested_seq = payload[0]; // NAK payload contains the sequence
-                                          // number being requested
+      // number being requested
       std::cout << "[LUMEN] Processing NAK for missing seq: "
                 << static_cast<int>(requested_seq) << std::endl;
       reliability_manager_->process_nak(
@@ -490,23 +489,48 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
   }
   // --- End Control Packet Handling ---
 
-  // --- Reliability Actions for Data/Status/Cmd packets ---
-  // Base station sends an ACK for every non-control packet it receives
-  // successfully.
-  if (mode_ == ProtocolMode::BASE_STATION) {
-    // Check if we already ACKed this sequence to prevent sending duplicate ACKs
-    // if the sender retransmits.
-    // BUT resend ACK if there's a duplicate
-    if (!reliability_manager_->has_acked_sequence(seq, endpoint)) {
-      send_ack(seq, endpoint);
-    } else {
-      std::cout << "[LUMEN] Ignoring duplicate packet seq: "
-                << static_cast<int>(seq) << " from " << endpoint
-                << " (already ACKed). Resending ACK." << std::endl;
+  bool forward_payload =
+      true; // Assume we forward unless it's a known duplicate
 
-      // resend the ack in case the precious ACK was lost
-      send_ack(seq, endpoint);
-      return; // Do not process duplicate packet further
+  if (mode_ == ProtocolMode::BASE_STATION) {
+    bool is_active = session_active_.load(); // Check the session state flag
+
+    // Check if we already know this sequence number
+    bool already_acked =
+        reliability_manager_->has_acked_sequence(seq, endpoint);
+
+    if (is_active) {
+      // Session is ACTIVE: Send ACK unless it's a duplicate we've already
+      // recorded. Resend ACK if it *is* a duplicate.
+      if (!already_acked) {
+        reliability_manager_->record_acked_sequence(
+            seq, endpoint);      // Record ACK first time
+        send_ack(seq, endpoint); // Send ACK
+      } else {
+        // It's a duplicate packet received while active
+        std::cout << "[LUMEN] Duplicate packet seq: " << static_cast<int>(seq)
+                  << " from " << endpoint << " (already ACKed). Resending ACK."
+                  << std::endl;
+        send_ack(seq, endpoint); // Resend ACK in case the first was lost
+        forward_payload = false; // Do not forward payload for duplicates
+      }
+    } else {
+      // Session is NOT ACTIVE: Do not send ACK for non-control packets.
+      // Do not record it as ACKed either.
+      std::cout << "[LUMEN] Suppressing ACK for seq: " << static_cast<int>(seq)
+                << " from " << endpoint << ". Base Station session not active."
+                << std::endl;
+      // Check if we've seen this seq *before* becoming inactive (unlikely but
+      // possible)
+      if (already_acked) {
+        forward_payload =
+            false; // Don't forward duplicates even if inactive now
+        std::cout << "[LUMEN] Duplicate packet seq: " << static_cast<int>(seq)
+                  << " received while inactive. Not forwarding payload."
+                  << std::endl;
+      }
+      // Note: If a non-duplicate packet arrives while inactive, we don't ACK,
+      // but we still might forward the payload based on `forward_payload` flag.
     }
   }
 
@@ -520,24 +544,26 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
   }
 
   // --- Forward Payload to Upper Layer (MessageManager) ---
-  // Get a thread-safe copy of the callback function pointer.
-  std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
-                     const udp::endpoint &)>
-      callback_copy;
-  {
-    std::lock_guard<std::mutex> lock(callback_mutex_);
-    callback_copy = message_callback_;
-  }
+  if (forward_payload) { // <-- Only forward if not a detected duplicate
+    std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
+                       const udp::endpoint &)>
+        callback_copy;
+    {
+      std::lock_guard<std::mutex> lock(callback_mutex_);
+      callback_copy = message_callback_;
+    }
 
-  if (callback_copy) {
-    // Pass the extracted payload, header (containing metadata), and sender
-    // endpoint to the MessageManager
-    callback_copy(payload, header, endpoint);
-  } else {
-    std::cerr << "[LUMEN] Warning: No message callback set. Discarding payload "
-                 "for packet seq: "
-              << static_cast<int>(seq) << std::endl;
-  }
+    if (callback_copy) {
+      // Pass the extracted payload, header (containing metadata), and sender
+      // endpoint to the MessageManager
+      callback_copy(payload, header, endpoint);
+    } else {
+      std::cerr
+          << "[LUMEN] Warning: No message callback set. Discarding payload "
+             "for packet seq: "
+          << static_cast<int>(seq) << std::endl;
+    }
+  } // End if(forward_payload)
 }
 
 // Checks for missing sequence numbers (Rover only).
@@ -711,4 +737,10 @@ void LumenProtocol::handle_retransmission(const LumenPacket &packet,
             << endpoint << std::endl;
   // Simply resend the exact same packet.
   send_packet(packet, endpoint);
+}
+
+void LumenProtocol::set_session_active(bool active) {
+  session_active_.store(active);
+  std::cout << "[LUMEN] Session active flag set to: "
+            << (active ? "true" : "false") << std::endl;
 }

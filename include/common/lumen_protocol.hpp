@@ -137,6 +137,8 @@ public:
    */
   uint8_t get_current_sequence() const;
 
+  void set_session_active(bool active);
+
 private:
   /**
    * @brief Internal callback handler for raw data received from the UDP layer
@@ -260,6 +262,7 @@ private:
 
   std::atomic<bool>
       running_; ///< Flag indicating if the protocol handler is active.
+  std::atomic<bool> session_active_ = false;
 
   boost::asio::io_context &io_context_; ///< Reference to the main ASIO context.
 };
