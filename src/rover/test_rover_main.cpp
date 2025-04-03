@@ -1,9 +1,8 @@
-// lunar-net-protocol-cpy/src/rover/test_rover_main.cpp
-
 #include "basic_message.hpp"
 #include "command_message.hpp"
 #include "message.hpp"
 #include "rover.hpp"
+#include "telemetry_message.hpp"
 #include "udp_server.hpp"
 
 #include <boost/asio.hpp>
@@ -20,8 +19,7 @@ const int EXTRA_LISTENER_PORT = 60060;
 const int COORD_REQUEST_TARGET_PORT = 50050;
 
 int main() {
-  const std::string BASE_HOST =
-      "10.237.0.201"; // Using localhost for local demo
+  const std::string BASE_HOST = "10.237.0.201";
   const int BASE_PORT = 9000;
   const std::string ROVER_ID = "grp-18";
 
@@ -40,34 +38,17 @@ int main() {
                     << sender.address().to_string() << ":" << sender.port()
                     << std::endl;
 
-          if (message->get_type() == CommandMessage::message_type()) {
-            CommandMessage *cmd_msg =
-                dynamic_cast<CommandMessage *>(message.get());
-            if (cmd_msg && cmd_msg->get_command() == "GET_STATUS") {
-              std::cout << "[ROVER MAIN] Received GET_STATUS command from base."
-                        << std::endl;
-              std::cout << "[ROVER MAIN] --> Responding with current status..."
-                        << std::endl;
-              rover.send_status(); // Send current status back to base
-            } else if (cmd_msg) {
-              // Handle other commands if necessary
-              std::cout << "[ROVER MAIN] Received other command: "
-                        << cmd_msg->get_command() << std::endl;
-              std::cout << Message::pretty_print(cmd_msg->serialise())
-                        << std::endl;
-            }
-          }
-          // Handle other message types if needed
-          else if (message->get_type() == BasicMessage::message_type()) {
+          // if basic message just print to terminal
+          if (message->get_type() == BasicMessage::message_type()) {
+            // Attempt to cast safely - dynamic_cast returns nullptr if cast
+            // fails
             BasicMessage *basic_msg =
                 dynamic_cast<BasicMessage *>(message.get());
             if (basic_msg) {
-              std::cout << "[ROVER MAIN] Received BasicMessage:" << std::endl;
               std::cout << Message::pretty_print(basic_msg->serialise())
                         << std::endl;
             }
           }
-          // Implicitly handles Telemetry/Status (logged by Base)
         });
 
     rover.start();
@@ -75,37 +56,23 @@ int main() {
     std::cout << "[ROVER MAIN] Rover started. Attempting handshake with "
               << BASE_HOST << ":" << BASE_PORT << "." << std::endl;
 
-    std::vector<boost::asio::ip::udp::endpoint>
-        received_endpoints; // For discovery demo
+    std::vector<boost::asio::ip::udp::endpoint> received_endpoints;
     auto extra_listener =
         std::make_shared<UdpServer>(io_context, EXTRA_LISTENER_PORT);
+    auto coords_listener =
+        std::make_shared<UdpServer>(io_context, COORD_REQUEST_TARGET_PORT);
 
     extra_listener->set_receive_callback(
         [&rover, &received_endpoints,
          &ROVER_ID](const std::vector<uint8_t> &data,
                     const boost::asio::ip::udp::endpoint &sender) {
+          std::cout << "[Listener " << EXTRA_LISTENER_PORT << "] Received "
+                    << data.size() << " bytes from " << sender << std::endl;
+
           std::string received_msg(data.begin(), data.end());
           std::cout << "[Listener " << EXTRA_LISTENER_PORT
-                    << "] Received probe/message: \"" << received_msg
-                    << "\" from " << sender << std::endl;
+                    << "] Raw Message: " << received_msg << std::endl;
 
-          if (received_msg.find("ACK IF ALIVE") != std::string::npos ||
-              received_msg.find("ROVER_DISCOVER") !=
-                  std::string::npos) { // Check for probe keywords
-            BasicMessage response_msg(
-                "Acknowledged: Rover " + ROVER_ID + " is active.", ROVER_ID);
-            std::cout << "[Listener " << EXTRA_LISTENER_PORT
-                      << "] --> Sending basic info ACK back to " << sender
-                      << std::endl;
-            rover.send_raw_message(response_msg,
-                                   sender); // Send basic info back directly
-          } else {
-            std::cout << "[Listener " << EXTRA_LISTENER_PORT
-                      << "] Received non-probe message. Not sending ACK."
-                      << std::endl;
-          }
-
-          // Store endpoint if new
           bool found = false;
           for (const auto &ep : received_endpoints) {
             if (ep == sender) {
@@ -120,19 +87,79 @@ int main() {
                       << ". Total stored: " << received_endpoints.size()
                       << std::endl;
           }
+
+          BasicMessage response_msg("Acknowledged. We are group 18.", ROVER_ID);
+
+          std::cout << "[Listener " << EXTRA_LISTENER_PORT
+                    << "] Sending ACK message back to " << sender << std::endl;
+          std::cout << "-> \"Acknowledged. We are group 18.\"\n";
+          rover.send_raw_message(response_msg, sender);
+        });
+    coords_listener->set_receive_callback(
+        [&rover, &received_endpoints,
+         &ROVER_ID](const std::vector<uint8_t> &data,
+                    const boost::asio::ip::udp::endpoint &sender) {
+          std::cout << "[Listener " << COORD_REQUEST_TARGET_PORT
+                    << "] Received " << data.size() << " bytes from " << sender
+                    << std::endl;
+
+          std::string received_msg(data.begin(), data.end());
+          std::cout << "[Listener " << COORD_REQUEST_TARGET_PORT
+                    << "] Raw Message: " << received_msg << std::endl;
+
+          std::map<std::string, double> location = {{"latitude", 53.3498},
+                                                    {"longitude", -6.2603}};
+
+          TelemetryMessage location_msg(location, ROVER_ID);
+
+          std::cout << "[Listener " << COORD_REQUEST_TARGET_PORT
+                    << "] Sending location message back to " << sender
+                    << std::endl;
+          rover.send_raw_message(location_msg, sender);
         });
 
     extra_listener->start();
+    coords_listener->start();
 
     std::cout << "[ROVER MAIN] Started extra listener on port "
-              << EXTRA_LISTENER_PORT << " for simple discovery/probes."
-              << std::endl;
+              << EXTRA_LISTENER_PORT << "." << std::endl;
 
-    // Timers for periodic actions
+    std::cout << "[ROVER MAIN] Started coords listener on port "
+              << COORD_REQUEST_TARGET_PORT << "." << std::endl;
+
+    // Coordinate request timer
+    boost::asio::steady_timer request_timer(io_context);
     boost::asio::steady_timer broadcast_timer(io_context);
 
     std::function<void(const boost::system::error_code &)>
         broadcast_timer_handler;
+    std::function<void(const boost::system::error_code &)>
+        request_timer_handler;
+
+    request_timer_handler = [&](const boost::system::error_code &ec) {
+      if (ec == boost::asio::error::operation_aborted) {
+        std::cout << "[Coord Timer] Timer cancelled." << std::endl;
+        return;
+      } else if (ec) {
+        std::cerr << "[Coord Timer] Timer error: " << ec.message() << std::endl;
+        return;
+      }
+
+      std::cout << "[Coord Timer] Sending coordinate requests..." << std::endl;
+      for (const auto &ep : received_endpoints) {
+        // Create the target endpoint with the correct port
+        boost::asio::ip::udp::endpoint target_ep(ep.address(),
+                                                 COORD_REQUEST_TARGET_PORT);
+
+        // Create the command message
+        CommandMessage cmd_msg("SEND_COORDS PLS", "", ROVER_ID);
+        rover.send_raw_message(cmd_msg, target_ep);
+      }
+
+      // Reschedule the timer for 10 seconds later
+      request_timer.expires_after(std::chrono::seconds(17));
+      request_timer.async_wait(request_timer_handler);
+    };
 
     broadcast_timer_handler = [&](const boost::system::error_code &ec) {
       if (ec == boost::asio::error::operation_aborted) {
@@ -144,38 +171,43 @@ int main() {
         return;
       }
 
-      std::cout << "[Broadcast Timer] Sending discovery broadcast/scan..."
+      std::cout << "[Broadcast Timer] Sending periodic broadcast..."
                 << std::endl;
+      extra_listener->scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE",
+                                      ROVER_ID);
 
-      extra_listener->scan_for_rovers(
-          EXTRA_LISTENER_PORT, "ACK IF ALIVE",
-          ROVER_ID); // Option 2: Use listener's simple broadcast
-
-      broadcast_timer.expires_after(
-          std::chrono::seconds(23)); // Interval for broadcast
+      broadcast_timer.expires_after(std::chrono::seconds(23));
       broadcast_timer.async_wait(broadcast_timer_handler);
     };
 
     broadcast_timer.expires_at(std::chrono::steady_clock::now());
     broadcast_timer.async_wait(broadcast_timer_handler);
-    std::cout << "[ROVER MAIN] Periodic broadcast timer started." << std::endl;
+    std::cout << "[ROVER MAIN] Periodic broadcast timer started (60s interval)."
+              << std::endl;
 
-    // Signal handling for clean shutdown
+    // Start the timer for the first time
+    request_timer.expires_after(std::chrono::seconds(14));
+    request_timer.async_wait(request_timer_handler);
+    std::cout << "[ROVER MAIN] Coordinate request timer started (10s interval)."
+              << std::endl;
+
     boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
     signals.async_wait(
         [&](const boost::system::error_code &, int /*signal_number*/) {
           std::cout << "Interrupt signal received. Stopping..." << std::endl;
-          broadcast_timer.cancel();
-          // request_timer.cancel(); // Uncomment if using request_timer
+          request_timer.cancel();
           if (extra_listener)
             extra_listener->stop();
+          if (coords_listener)
+            coords_listener->stop();
+          broadcast_timer.cancel();
           rover.stop();
           io_context.stop();
         });
 
-    std::cout
-        << "[ROVER MAIN] Rover setup complete. Running... Press Ctrl+C to stop."
-        << std::endl;
+    std::cout << "[ROVER MAIN] Rover, listener, and timer running. Press "
+                 "Ctrl+C to stop."
+              << std::endl;
 
     io_context.run();
 
