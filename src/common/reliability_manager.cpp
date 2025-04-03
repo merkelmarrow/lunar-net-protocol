@@ -509,3 +509,16 @@ bool ReliabilityManager::has_acked_sequence(uint8_t seq,
   // Check if the sequence number exists in the set for this endpoint.
   return endpoint_it->second.count(seq) > 0;
 }
+
+void ReliabilityManager::reset_state() {
+  std::lock_guard<std::mutex> lock_sent(sent_packets_mutex_);
+  sent_packets_.clear();
+  std::lock_guard<std::mutex> lock_recv(received_sequences_mutex_);
+  received_sequences_.clear();
+  std::lock_guard<std::mutex> lock_nak(recent_naks_mutex_);
+  recent_naks_.clear();
+  std::lock_guard<std::mutex> lock_ack(acked_sequences_mutex_);
+  acked_sequences_.clear();
+  consecutive_timeouts_to_base_ = 0;
+  std::cout << "[RELIABILITY] State reset." << std::endl;
+}

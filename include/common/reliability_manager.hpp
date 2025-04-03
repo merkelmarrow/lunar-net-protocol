@@ -190,6 +190,8 @@ public:
    */
   void record_acked_sequence(uint8_t seq, const udp::endpoint &endpoint);
 
+  void reset_state();
+
 private:
   /**
    * @struct SentPacketInfo

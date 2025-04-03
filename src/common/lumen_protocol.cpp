@@ -164,6 +164,21 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
             << std::endl;
 }
 
+void LumenProtocol::reset_sequence_number() {
+  current_sequence_ = 0; // Reset sequence counter
+  if (reliability_manager_) {
+    reliability_manager_->reset_state(); // Reset reliability state
+  }
+  // Clear any partial data in frame buffers
+  {
+    std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
+    frame_buffers_.clear();
+  }
+  std::cout
+      << "[LUMEN] Sequence number reset to 0 and reliability state cleared."
+      << std::endl;
+}
+
 // Helper to create a consistent string key from an endpoint for map lookups.
 std::string
 LumenProtocol::get_endpoint_key(const udp::endpoint &endpoint) const {

@@ -99,6 +99,8 @@ public:
    */
   void stop();
 
+  void reset_sequence_number();
+
   /**
    * @brief Sends a payload through the LUMEN protocol.
    * Adds LUMEN headers, manages sequence numbers, interacts with
