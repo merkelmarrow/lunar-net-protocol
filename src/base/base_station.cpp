@@ -18,8 +18,7 @@ BaseStation::BaseStation(boost::asio::io_context &io_context, int port,
       session_state_(SessionState::INACTIVE), // start inactive
       station_id_(station_id) {
 
-  // instantiate underlying layers in order: transport -> protocol -> message
-  // manager
+  // instantiate layers in order: transport -> protocol -> message manager
   server_ = std::make_unique<UdpServer>(io_context, port);
   protocol_ =
       std::make_unique<LumenProtocol>(io_context, *server_); // pass server ref
@@ -32,7 +31,7 @@ BaseStation::BaseStation(boost::asio::io_context &io_context, int port,
 }
 
 BaseStation::~BaseStation() {
-  stop(); // ensure resources are released
+  stop();
 }
 
 void BaseStation::start() {
@@ -40,10 +39,10 @@ void BaseStation::start() {
     message_manager_->start();
   if (protocol_) {
     protocol_->start();
-    protocol_->set_session_active(false); // ensure inactive on start
+    protocol_->set_session_active(false); // inactive on start
   }
   if (server_)
-    server_->start(); // start server last (innermost layer)
+    server_->start(); // start server last
 
   // set up callback chain: messagemanager passes deserialized messages up
   if (message_manager_) {
@@ -121,8 +120,6 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
   std::string msg_type = message->get_type();
   std::string sender_id = message->get_sender();
 
-  // --- internal handling ---
-  // certain messages must be handled internally, primarily session management
 
   // 1. handle session management commands
   if (msg_type == CommandMessage::message_type()) {
@@ -158,7 +155,6 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
              connected_rover_id_ == sender_id && rover_endpoint_ == sender);
       }
     }
-    // note: session_init bypasses this check as handled earlier
   }
 
   if (!allow_message) {
@@ -167,10 +163,10 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
               << ". Reason: Session inactive or mismatch with expected "
                  "rover/endpoint."
               << std::endl;
-    return; // ignore message
+    return;
   }
 
-  // 3. optional internal handling for status/telemetry via dedicated callback
+  // 3. internal handling for status/telemetry via dedicated callback
   StatusCallback status_cb_copy;
   {
     std::lock_guard<std::mutex> lock(callback_mutex_);
@@ -181,18 +177,15 @@ void BaseStation::route_message(std::unique_ptr<Message> message,
     if (msg_type == StatusMessage::message_type()) {
       handle_internal_status(dynamic_cast<StatusMessage *>(message.get()),
                              status_cb_copy);
-      // decide if status messages handled here should also go to general
-      // handler return; // uncomment to make status_callback_ exclusive
+
     } else if (msg_type == TelemetryMessage::message_type()) {
       handle_internal_telemetry(dynamic_cast<TelemetryMessage *>(message.get()),
                                 status_cb_copy);
-      // decide if telemetry messages handled here should also go to general
-      // handler return; // uncomment to make status_callback_ exclusive
+
     }
   }
 
-  // --- application handling ---
-  // pass remaining messages to general application handler if registered
+  // pass remaining messages to general application handler
   ApplicationMessageHandler handler_copy;
   {
     std::lock_guard<std::mutex> lock(handler_mutex_);
@@ -234,7 +227,7 @@ void BaseStation::set_application_message_handler(
             << std::endl;
 }
 
-// handles internal session-related commands
+
 void BaseStation::handle_internal_command(CommandMessage *cmd_msg,
                                           const udp::endpoint &sender) {
   if (!cmd_msg)
@@ -267,7 +260,6 @@ void BaseStation::handle_internal_status(StatusMessage *status_msg,
   // convert status info to map format expected by callback
   std::map<std::string, double> status_data;
   status_data["status_level"] = static_cast<double>(status_msg->get_level());
-  // note: description cannot be included in this map<string, double> format
 
   // post callback execution to io_context thread pool
   boost::asio::post(io_context_, [cb = callback, id = sender_id,
@@ -293,8 +285,7 @@ void BaseStation::handle_internal_telemetry(TelemetryMessage *telemetry_msg,
 
   // post callback execution to io_context thread pool
   boost::asio::post(io_context_, [cb = callback, id = sender_id,
-                                  data = readings]() { // pass readings map
-                                                       // directly
+                                  data = readings]() { // pass readings map directly
     try {
       cb(id, data);
     } catch (const std::exception &e) {
@@ -305,7 +296,6 @@ void BaseStation::handle_internal_telemetry(TelemetryMessage *telemetry_msg,
   });
 }
 
-// --- session management implementation ---
 
 void BaseStation::handle_session_init(const std::string &rover_id,
                                       const udp::endpoint &sender) {
@@ -323,20 +313,19 @@ void BaseStation::handle_session_init(const std::string &rover_id,
     current_rover_endpoint = rover_endpoint_;
   }
 
-  // if already active with same rover and endpoint, resend established or
-  // ignore
+  // if already active with same rover and endpoint, resend established or ignore
   if (current_local_state == SessionState::ACTIVE &&
       current_rover_id == rover_id && current_rover_endpoint == sender) {
     std::cout
         << "[BASE INTERNAL] Ignoring SESSION_INIT from '" << rover_id
         << "' as session is already ACTIVE. Re-sending SESSION_ESTABLISHED."
         << std::endl;
-    send_command("SESSION_ESTABLISHED", station_id_); // re-confirm session
+    send_command("SESSION_ESTABLISHED", station_id_); // confirm again
     return;
   }
 
   bool send_accept = false;
-  bool reset_session = false; // flag if resetting due to collision/re-init
+  bool reset_session = false;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
 
@@ -385,7 +374,7 @@ void BaseStation::handle_session_init(const std::string &rover_id,
                 << rover_endpoint_ << std::endl;
     } else {
       reset_session = (session_state_ ==
-                       SessionState::ACTIVE); // ensure reset if we were active
+                       SessionState::ACTIVE);
     }
   }
 
@@ -409,9 +398,9 @@ void BaseStation::handle_session_confirm(const std::string &rover_id,
   std::cout << "[BASE INTERNAL] Received SESSION_CONFIRM from rover ID: '"
             << rover_id << "' at " << sender << std::endl;
 
-  bool send_established = false; // flag to send session_established
+  bool send_established = false;
 
-  { // state mutex lock scope
+  {
     std::lock_guard<std::mutex> lock(state_mutex_);
 
     // verify confirm is from expected rover during correct handshake phase
@@ -422,7 +411,7 @@ void BaseStation::handle_session_confirm(const std::string &rover_id,
                 << static_cast<int>(session_state_)
                 << ") or rover mismatch (Expected: '" << connected_rover_id_
                 << "' at " << rover_endpoint_ << ")." << std::endl;
-      return; // ignore invalid confirmation
+      return;
     }
 
     // handshake successful, transition to active state
@@ -453,14 +442,13 @@ void BaseStation::send_command(const std::string &command,
   bool can_send = false;
   std::string current_rover;
 
-  { // state mutex lock scope
+  {
     std::lock_guard<std::mutex> lock(state_mutex_);
     current_rover = connected_rover_id_;
 
     bool is_session_command =
         (command == "SESSION_ACCEPT" || command == "SESSION_ESTABLISHED");
 
-    // check if session state allows sending this command
     if (session_state_ == SessionState::ACTIVE ||
         (session_state_ == SessionState::HANDSHAKE_ACCEPT &&
          command == "SESSION_ACCEPT") ||
@@ -484,7 +472,7 @@ void BaseStation::send_command(const std::string &command,
 
   if (can_send) {
     CommandMessage cmd_msg(command, params,
-                           station_id_); // create message object
+                           station_id_);
     if (message_manager_) {
       std::cout << "[BASE STATION] Sending command '" << command
                 << "' to rover '" << current_rover << "' at " << target_endpoint
@@ -495,8 +483,7 @@ void BaseStation::send_command(const std::string &command,
                 << "', MessageManager is null." << std::endl;
     }
   } else {
-    // log why sending failed
-    SessionState current_state_local = get_session_state(); // get state safely
+    SessionState current_state_local = get_session_state();
     std::cerr << "[BASE STATION] Cannot send command '" << command
               << "'. Session not in appropriate state (Current: "
               << static_cast<int>(current_state_local)
@@ -519,26 +506,22 @@ void BaseStation::send_raw_message(const Message &message,
               << std::endl;
     return;
   }
-  // delegate raw sending to messagemanager
   message_manager_->send_raw_message(message, recipient);
 }
 
 void BaseStation::set_low_power_mode(bool enable) {
-  // command: set_low_power, params: "1" or "0"
   std::string params = enable ? "1" : "0";
   send_command("SET_LOW_POWER", params);
 }
 
 void BaseStation::set_rover_target(double latitude, double longitude) {
-  // command: set_target_coord, params: "latitude,longitude"
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(6) << latitude << "," << longitude;
   std::string params = oss.str();
   send_command("SET_TARGET_COORD", params);
 }
 
-// sends a standard application message via the full protocol stack to a
-// specific recipient
+// sends a standard application message via the full protocol stack to a specific recipient
 void BaseStation::send_message(const Message &message,
                                const udp::endpoint &recipient) {
   if (!message_manager_) {
@@ -554,6 +537,5 @@ void BaseStation::send_message(const Message &message,
     return;
   }
 
-  // delegate sending to messagemanager, ensuring recipient is specified
   message_manager_->send_message(message, recipient);
 }

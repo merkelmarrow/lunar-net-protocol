@@ -9,8 +9,7 @@
 #include <mutex>
 #include <vector>
 
-// note: passes optional udpserver/udpclient pointers for send_raw_message
-// functionality
+// passes udpserver/udpclient pointers for send_raw_message
 MessageManager::MessageManager(boost::asio::io_context &io_context,
                                LumenProtocol &protocol,
                                const std::string &sender_id, UdpServer *server,
@@ -54,32 +53,25 @@ void MessageManager::send_message(const Message &message,
   }
 
   try {
-    // convert application-level message object into json string
     std::string json_str = message.serialise();
-    // convert json string into binary payload for protocol layer
     std::vector<uint8_t> payload = string_to_binary(json_str);
 
-    // extract protocol-specific details (type, priority) from message object
     LumenHeader::MessageType lumen_type = message.get_lumen_type();
     LumenHeader::Priority priority = message.get_lumen_priority();
 
-    // pass binary payload and metadata down to lumenprotocol layer
     protocol_.send_message(payload, lumen_type, priority, recipient);
 
-    // logging: determine target endpoint for logging
     udp::endpoint log_recipient = recipient;
     if (log_recipient.address().is_unspecified() && client_) {
       // if recipient is default and we are a client, log client's base endpoint
-      try { // add try-catch in case base endpoint isn't resolved yet
+      try {
         log_recipient = client_->get_base_endpoint();
       } catch (const std::runtime_error &e) {
         std::cerr
             << "[WARN] MessageManager logging: Could not get base endpoint - "
             << e.what() << std::endl;
-        // keep log_recipient as unspecified
       }
     }
-    // removed verbose logging here
 
   } catch (const std::exception &e) {
     std::cerr << "[ERROR] MessageManager failed to send message type "
@@ -91,11 +83,10 @@ void MessageManager::set_message_callback(
     std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>
         callback) {
   std::lock_guard<std::mutex> lock(callback_mutex_);
-  // store callback provided by application layer (e.g., basestation or rover)
   message_callback_ = std::move(callback);
 }
 
-// this function is called by lumenprotocol when it delivers a validated payload
+
 void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
                                           const LumenHeader &header,
                                           const udp::endpoint &sender) {
@@ -103,10 +94,8 @@ void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
     return;
 
   try {
-    // convert binary payload received from lumenprotocol back into string
     std::string json_str = binary_to_string(payload);
 
-    // validation to ensure payload is valid json
     if (!Message::is_valid_json(json_str)) {
       std::cerr << "[ERROR] MessageManager received invalid JSON payload from "
                    "protocol. Seq: "
@@ -145,7 +134,6 @@ void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
                 << sender << std::endl;
     }
   } catch (const std::exception &error) {
-    // catch potential errors during deserialization or other processing
     std::cerr << "[ERROR] MessageManager failed to process received lumen "
                  "message payload. Seq: "
               << static_cast<int>(header.get_sequence()) << " from " << sender
@@ -153,12 +141,10 @@ void MessageManager::handle_lumen_message(const std::vector<uint8_t> &payload,
   }
 }
 
-// helper function for simple string-to-byte conversion
 std::vector<uint8_t> MessageManager::string_to_binary(const std::string &str) {
   return std::vector<uint8_t>(str.begin(), str.end());
 }
 
-// helper function for simple byte-to-string conversion
 std::string MessageManager::binary_to_string(const std::vector<uint8_t> &data) {
   return std::string(data.begin(), data.end());
 }
@@ -172,18 +158,16 @@ void MessageManager::send_raw_message(const Message &message,
   }
 
   try {
-    // serialize message to json, as that's the expected raw format
     std::string json_str = message.serialise();
     std::vector<uint8_t> data = string_to_binary(json_str);
 
-    // use appropriate udp transport pointer (if available) to send raw data
-    if (server_) { // if configured with server (basestation mode)
+    // use appropriate udp transport pointer to send raw data
+    if (server_) {
       server_->send_data(data, recipient);
-    } else if (client_) { // if configured with client (rover mode)
-      // udpclient needs to differentiate sending to default base vs. specific
-      // endpoint
+    } else if (client_) { // rover mode
+      // udpclient needs to differentiate sending to default base vs. specific endpoint
       bool sending_to_base = false;
-      try { // handle case where base endpoint might not be resolved yet
+      try {
         sending_to_base = (recipient.address().is_unspecified() ||
                            recipient == client_->get_base_endpoint());
       } catch (const std::runtime_error &e) {
@@ -195,10 +179,10 @@ void MessageManager::send_raw_message(const Message &message,
       }
 
       if (sending_to_base) {
-        client_->send_data(data); // send to default registered base
+        client_->send_data(data);
       } else {
         client_->send_data_to(data,
-                              recipient); // send to specific non-base endpoint
+                              recipient);
       }
     } else {
       std::cerr << "[ERROR] MessageManager: No UdpServer or UdpClient "
@@ -211,8 +195,7 @@ void MessageManager::send_raw_message(const Message &message,
   }
 }
 
-// processes a message object deserialized directly from raw json (bypassing
-// lumenprotocol)
+// processes a message object deserialized directly from raw json (bypassing lumenprotocol)
 void MessageManager::process_raw_json_message(std::unique_ptr<Message> message,
                                               const udp::endpoint &sender) {
   if (!running_ || !message)

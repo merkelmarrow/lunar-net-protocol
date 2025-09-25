@@ -12,8 +12,7 @@
 
 using boost::asio::ip::udp;
 
-// provides asynchronous udp server functionality using boost.asio for the base
-// station
+
 class UdpServer {
 public:
   UdpServer(boost::asio::io_context &context, int port);
@@ -47,12 +46,13 @@ private:
   void receive_data();
 
   udp::socket socket_;
-  udp::endpoint sender_endpoint_; // stores the endpoint of the client from the
-                                  // last successful receive
+
+  // stores the endpoint of the client from the last successful receive
+  udp::endpoint sender_endpoint_; 
 
   std::array<char, SERVER_SOCK_BUF_SIZE> buffer_;
 
-  // callback function provided by the user (e.g., lumenprotocol)
+  // callback function, calls the LUMEN protocol
   std::function<void(const std::vector<uint8_t> &, const udp::endpoint &)>
       receive_callback_;
 

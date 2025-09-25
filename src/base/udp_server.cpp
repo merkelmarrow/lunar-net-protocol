@@ -26,7 +26,7 @@ void UdpServer::start() {
 }
 
 void UdpServer::stop() {
-  running_ = false; // prevent new async operations
+  running_ = false;
 
   // close socket to interrupt pending operations and release port
   if (socket_.is_open()) {
@@ -62,7 +62,6 @@ void UdpServer::send_data(const std::vector<uint8_t> &data,
     return;
   }
 
-  // initiate an asynchronous send operation
   socket_.async_send_to(boost::asio::buffer(data), recipient,
                         [this, recipient](boost::system::error_code ec,
                                           std::size_t /*bytes_sent*/) {
@@ -71,9 +70,6 @@ void UdpServer::send_data(const std::vector<uint8_t> &data,
                                 << "[ERROR] UdpServer failed to send data to "
                                 << recipient << ": " << ec.message()
                                 << std::endl;
-                          } else {
-                            // successful send, optional logging removed for
-                            // brevity
                           }
                         });
 }
@@ -81,15 +77,12 @@ void UdpServer::send_data(const std::vector<uint8_t> &data,
 // initiates or continues the asynchronous receive loop
 void UdpServer::receive_data() {
   if (!running_)
-    return; // don't start new receive if stopped
+    return;
 
-  // start an asynchronous receive operation
   socket_.async_receive_from(
-      boost::asio::buffer(buffer_), // target buffer
-      sender_endpoint_,             // populated with sender's endpoint
-      // completion handler:
+      boost::asio::buffer(buffer_),
+      sender_endpoint_,
       [this](const boost::system::error_code &ec, std::size_t length) {
-        // check if operation successful and server still running
         if (!ec && running_) {
           // convert received data from internal buffer to std::vector
           std::vector<uint8_t> received_data(buffer_.data(),
@@ -105,7 +98,6 @@ void UdpServer::receive_data() {
             callback_copy = receive_callback_;
           }
 
-          // invoke application-level callback if set
           if (callback_copy) {
             try {
               callback_copy(received_data, endpoint_copy);
@@ -119,7 +111,6 @@ void UdpServer::receive_data() {
                       << std::endl;
           }
 
-          // if still running, issue next receive operation
           if (running_) {
             receive_data(); // recursive call to keep listening
           }
@@ -129,17 +120,14 @@ void UdpServer::receive_data() {
               << "[SERVER] Receive operation aborted (likely due to stop)."
               << std::endl;
         } else if (running_) {
-          // unexpected error
           std::cerr << "[ERROR] UdpServer receive error: " << ec.message()
                     << std::endl;
-          // consider adding retry logic or just stop
-          stop(); // simple stop on error for now
+          stop();
         }
-        // if !running_, handler returns, stopping the loop
-      }); // end of completion handler lambda
+      });
 }
 
-// provides access to the endpoint of the most recent sender
+// most recent sender
 const udp::endpoint UdpServer::get_sender_endpoint() {
   std::lock_guard<std::mutex> lock(endpoint_mutex_);
   return sender_endpoint_;
@@ -162,8 +150,8 @@ void UdpServer::scan_for_rovers(int discovery_port, const std::string &message,
     std::string json_payload = discover_msg.serialise();
     std::vector<uint8_t> data_to_send(json_payload.begin(), json_payload.end());
 
-    // iterates through a common private ip range, adjust as needed
-    for (int i = 2; i <= 120; ++i) { // todo: make range configurable
+    // iterates through our agreed IP ranges
+    for (int i = 2; i <= 120; ++i) {
       std::string ip_str = "10.237.0." + std::to_string(i);
       boost::system::error_code ec;
       boost::asio::ip::address_v4 target_addr =
@@ -176,7 +164,7 @@ void UdpServer::scan_for_rovers(int discovery_port, const std::string &message,
 
       udp::endpoint target_endpoint(
           target_addr, static_cast<unsigned short>(discovery_port));
-      send_data(data_to_send, target_endpoint); // uses the async send_data
+      send_data(data_to_send, target_endpoint);
     }
     std::cout << "[SERVER SCAN] Finished queuing unicast scan packets."
               << std::endl;

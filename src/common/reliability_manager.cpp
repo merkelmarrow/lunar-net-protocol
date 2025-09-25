@@ -90,7 +90,6 @@ void ReliabilityManager::add_send_packet(uint8_t seq, const LumenPacket &packet,
 }
 
 void ReliabilityManager::process_ack(uint8_t seq) {
-  // acks are only processed by the rover
   if (!running_ || role_ != Role::ROVER) {
     return;
   }
@@ -99,21 +98,15 @@ void ReliabilityManager::process_ack(uint8_t seq) {
 
   auto it = sent_packets_.find(seq);
   if (it != sent_packets_.end()) {
-    // packet acknowledged, remove it from tracking
     consecutive_timeouts_to_base_ = 0;
     sent_packets_.erase(it);
-  } else {
-    // benign if ack arrives after retransmission or is duplicate
   }
 }
 
 void ReliabilityManager::process_nak(uint8_t seq) {
-  // naks are only processed by the base station
   if (!running_ || role_ != Role::BASE_STATION) {
     return;
   }
-
-  // note: assumes immediate retransmission upon nak
 
   std::lock_guard<std::mutex> lock(sent_packets_mutex_);
 
@@ -160,7 +153,6 @@ void ReliabilityManager::record_received_sequence(uint8_t seq,
 
 std::vector<uint8_t>
 ReliabilityManager::get_missing_sequences(const udp::endpoint &sender) {
-  // only the rover needs to detect missing sequences to send naks
   if (role_ != Role::ROVER) {
     return {};
   }
@@ -200,10 +192,9 @@ bool ReliabilityManager::is_recently_naked(uint8_t seq) {
 
   auto it = recent_naks_.find(seq);
   if (it == recent_naks_.end()) {
-    return false; // haven't sent a nak recently
+    return false;
   }
 
-  // check if recorded nak time is within debounce interval
   auto now = std::chrono::steady_clock::now();
   auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
@@ -212,12 +203,10 @@ bool ReliabilityManager::is_recently_naked(uint8_t seq) {
 }
 
 void ReliabilityManager::record_nak_sent(uint8_t seq) {
-  // record the time when a nak for this sequence was sent
   std::lock_guard<std::mutex> lock(recent_naks_mutex_);
   recent_naks_[seq] = std::chrono::steady_clock::now();
 }
 
-// this function is primarily used by the rover's retransmission timer
 std::vector<std::pair<LumenPacket, udp::endpoint>>
 ReliabilityManager::get_packets_to_retransmit() {
 
@@ -230,15 +219,12 @@ ReliabilityManager::get_packets_to_retransmit() {
     auto &info = it->second;
     uint8_t seq = it->first;
 
-    // --- role-specific retransmission logic ---
-
-    // base station: never retransmits based on timer, only on nak
     if (role_ == Role::BASE_STATION) {
       ++it;
       continue;
     }
 
-    // rover: uses timeout-based retransmission
+    // rover uses timeout-based retransmission
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         now - info.sent_time);
     // calculate exponential backoff timeout
@@ -249,7 +235,7 @@ ReliabilityManager::get_packets_to_retransmit() {
       // timeout exceeded, check max retries
       if (info.retry_count >= RELIABILITY_MAX_RETRIES) {
         bool timeout_to_base = false;
-        // todo: replace port check with more robust base station identification
+        // hardcoded, should probably make configurable later
         if (info.recipient.port() == 9000) {
           timeout_to_base = true;
         }
@@ -292,7 +278,7 @@ ReliabilityManager::get_packets_to_retransmit() {
         // add packet to the list for retransmission
         packets_to_retransmit.push_back({info.packet, info.recipient});
 
-        // update packet info: reset sent_time and increment retry_count
+        // update packet info, reset sent_time and increment retry_count
         info.sent_time = now;
         info.retry_count++;
 
@@ -306,7 +292,7 @@ ReliabilityManager::get_packets_to_retransmit() {
       // packet has not timed out yet
       ++it;
     }
-  } // end of loop
+  }
 
   return packets_to_retransmit;
 }
@@ -367,11 +353,9 @@ void ReliabilityManager::handle_retransmission_timer() {
   }
 }
 
-// removes old entries from tracking maps to prevent infinite growth
 void ReliabilityManager::cleanup_old_entries() {
   auto now = std::chrono::steady_clock::now();
 
-  // clean up received sequences map
   {
     std::lock_guard<std::mutex> lock(received_sequences_mutex_);
     for (auto &pair : received_sequences_) {
@@ -388,14 +372,13 @@ void ReliabilityManager::cleanup_old_entries() {
     }
   }
 
-  // clean up recent naks map
   {
     std::lock_guard<std::mutex> lock(recent_naks_mutex_);
     for (auto it = recent_naks_.begin(); it != recent_naks_.end();) {
       auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
           now - it->second);
       if (elapsed >
-          NAK_DEBOUNCE_TIME * 2) { // keep slightly longer than debounce
+          NAK_DEBOUNCE_TIME * 2) {
         it = recent_naks_.erase(it);
       } else {
         ++it;
@@ -403,10 +386,8 @@ void ReliabilityManager::cleanup_old_entries() {
     }
   }
 
-  // clean up acked sequences map (relevant for base station)
   {
     std::lock_guard<std::mutex> lock(acked_sequences_mutex_);
-    // simple approach: clear the entire acked map periodically
     if (now > last_ack_cleanup_time_ + CLEANUP_INTERVAL * 2) {
       acked_sequences_.clear();
       last_ack_cleanup_time_ = now;
@@ -424,7 +405,6 @@ void ReliabilityManager::handle_cleanup_timer() {
 
   cleanup_old_entries();
 
-  // reschedule the timer
   if (running_) {
     cleanup_timer_.expires_at(cleanup_timer_.expiry() + CLEANUP_INTERVAL);
     cleanup_timer_.async_wait([this](const boost::system::error_code &error) {
@@ -457,7 +437,7 @@ bool ReliabilityManager::has_acked_sequence(uint8_t seq,
 
   auto endpoint_it = acked_sequences_.find(endpoint_key);
   if (endpoint_it == acked_sequences_.end()) {
-    return false; // no acks recorded for this endpoint yet
+    return false;
   }
 
   return endpoint_it->second.count(seq) > 0;

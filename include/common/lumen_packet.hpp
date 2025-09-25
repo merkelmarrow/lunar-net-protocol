@@ -7,7 +7,6 @@
 #include <optional>
 #include <vector>
 
-// represents a complete lumen protocol data unit
 class LumenPacket {
 public:
   LumenPacket(const LumenHeader &header, const std::vector<uint8_t> &payload);
@@ -30,6 +29,5 @@ private:
   LumenHeader header_;
   std::vector<uint8_t> payload_;
 
-  // calculates the crc8 checksum over the header and payload
   uint8_t calculate_packet_crc() const;
 };

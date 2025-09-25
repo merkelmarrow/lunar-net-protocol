@@ -24,7 +24,7 @@ void command_input_thread(BaseStation &base,
             << std::endl;
   while (std::getline(std::cin, line)) {
     if (shutdown_requested)
-      break; // exit if shutdown requested
+      break;
 
     std::istringstream iss(line);
     std::vector<std::string> tokens;
@@ -74,19 +74,18 @@ void command_input_thread(BaseStation &base,
                 << line << std::endl;
     }
     if (shutdown_requested)
-      break; // re-check after processing
+      break;
   }
   std::cout << "[CMD INPUT] Input thread finished." << std::endl;
 }
 
 int main() {
-  const int LISTEN_PORT = 9000; // port for the base station to listen on
+  const int LISTEN_PORT = 9000;
   const std::string STATION_ID = "grp18-base";
 
   try {
     boost::asio::io_context io_context;
 
-    // handle sigint/sigterm for graceful shutdown
     boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
     signals.async_wait([&](const boost::system::error_code & /*error*/,
                            int /*signal_number*/) {
@@ -95,14 +94,12 @@ int main() {
       shutdown_requested = true;
       // post stop actions to ensure thread safety
       boost::asio::post(io_context, [&]() {
-        io_context.stop(); // stop the event loop
+        io_context.stop();
       });
     });
 
-    // create the basestation instance
     BaseStation base(io_context, LISTEN_PORT, STATION_ID);
 
-    // set a simple handler to print received messages
     base.set_application_message_handler(
         [&](std::unique_ptr<Message> message,
             const boost::asio::ip::udp::endpoint &sender) {
@@ -122,25 +119,20 @@ int main() {
           }
         });
 
-    // start the base station
     base.start();
 
     std::cout << "[BASE MAIN] Base station started on port " << LISTEN_PORT
               << "." << std::endl;
     std::cout << "[BASE MAIN] Waiting for connections..." << std::endl;
 
-    // start command input thread
     std::thread input_thread(command_input_thread, std::ref(base),
                              std::ref(io_context));
 
-    // run the asio event loop
     io_context.run();
 
     std::cout << "[BASE MAIN] io_context stopped." << std::endl;
 
-    // wait for input thread to finish
     if (input_thread.joinable()) {
-      // potentially send newline to stdin to unblock getline if needed
       input_thread.join();
     }
     std::cout << "[BASE MAIN] Input thread joined." << std::endl;

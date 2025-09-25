@@ -20,7 +20,6 @@ LumenHeader::from_bytes(const std::vector<uint8_t> &bytes) {
     return std::nullopt;
   }
 
-  // check stx marker
   if (bytes[LUMEN_STX_POS] != LUMEN_STX) {
     std::cerr << "[ERROR] LumenHeader::from_bytes: Missing or incorrect STX "
                  "marker. Found: 0x"
@@ -29,7 +28,6 @@ LumenHeader::from_bytes(const std::vector<uint8_t> &bytes) {
     return std::nullopt;
   }
 
-  // extract fields based on defined positions
   MessageType type = static_cast<MessageType>(bytes[LUMEN_TYPE_POS]);
   Priority priority = static_cast<Priority>(bytes[LUMEN_PRIO_POS]);
   uint8_t sequence = bytes[LUMEN_SEQ_POS];
@@ -86,32 +84,30 @@ std::vector<uint8_t> LumenHeader::to_bytes() const {
   return bytes;
 }
 
-// static method to calculate crc8 checksum (used by lumenpacket)
+// method to calculate crc8 checksum (used by lumenpacket)
 // polynomial: 0x07 (x^8 + x^2 + x + 1)
 uint8_t LumenHeader::calculate_crc8(const std::vector<uint8_t> &data) {
-  uint8_t crc = 0x00; // initial value
+  uint8_t crc = 0x00;
 
   for (uint8_t byte : data) {
-    crc ^= byte;                  // xor byte into crc
-    for (int i = 0; i < 8; ++i) { // process each bit
-      if (crc & 0x80) {           // if msb is 1
-        crc = (crc << 1) ^ 0x07;  // shift left and xor with polynomial
+    crc ^= byte;
+    for (int i = 0; i < 8; ++i) {
+      if (crc & 0x80) {
+        crc = (crc << 1) ^ 0x07;
       } else {
-        crc <<= 1; // shift left
+        crc <<= 1;
       }
     }
   }
   return crc;
 }
 
-// accessors
 LumenHeader::MessageType LumenHeader::get_type() const { return type_; }
 LumenHeader::Priority LumenHeader::get_priority() const { return priority_; }
 uint8_t LumenHeader::get_sequence() const { return sequence_; }
 uint32_t LumenHeader::get_timestamp() const { return timestamp_; }
 uint16_t LumenHeader::get_payload_length() const { return payload_length_; }
 
-// mutators
 void LumenHeader::set_sequence(uint8_t seq) { sequence_ = seq; }
 void LumenHeader::set_timestamp(uint32_t timestamp) { timestamp_ = timestamp; }
 void LumenHeader::set_payload_length(uint16_t length) {

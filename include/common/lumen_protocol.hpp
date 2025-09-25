@@ -22,17 +22,15 @@
 
 using boost::asio::ip::udp;
 
-// implements the lumen custom protocol layer
 class LumenProtocol {
 public:
-  // defines the operational mode, affecting reliability behavior
   enum class ProtocolMode { BASE_STATION, ROVER };
   void set_timeout_callback(ReliabilityManager::TimeoutCallback callback);
 
-  // constructor for base_station mode
+  // base
   LumenProtocol(boost::asio::io_context &io_context, UdpServer &server);
 
-  // constructor for rover mode
+  // rover
   LumenProtocol(boost::asio::io_context &io_context, UdpClient &client);
 
   ~LumenProtocol();
@@ -46,14 +44,13 @@ public:
 
   void reset_sequence_number();
 
-  // sends a payload through the lumen protocol
+  // sends a message through the lumen protocol
   void send_message(const std::vector<uint8_t> &payload,
                     LumenHeader::MessageType type,
                     LumenHeader::Priority priority,
                     const udp::endpoint &recipient = udp::endpoint());
 
-  // sets the callback function invoked when a complete lumen packet payload is
-  // received
+  // sets the callback function invoked when a complete lumen packet message is received
   void set_message_callback(
       std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
                          const udp::endpoint &)>
@@ -64,6 +61,7 @@ public:
   void set_session_active(bool active);
 
 private:
+
   // internal callback handler for raw data received from the udp layer
   void handle_udp_data(const std::vector<uint8_t> &data,
                        const udp::endpoint &endpoint);
@@ -75,7 +73,7 @@ private:
   // sends a pre-constructed lumenpacket over the appropriate udp transport
   void send_packet(const LumenPacket &packet, const udp::endpoint &recipient);
 
-  // sends an ack packet (base station mode only)
+  // sends an ack packet (base station only)
   void send_ack(uint8_t seq_to_ack, const udp::endpoint &recipient);
 
   // sends a nak packet (rover mode only)
@@ -95,10 +93,9 @@ private:
   // creates a unique string key from a udp endpoint address and port
   std::string get_endpoint_key(const udp::endpoint &endpoint) const;
 
-  // checks for missing sequence numbers (rover mode only)
+  // checks for missing sequence numbers (rover only)
   void check_sequence_gaps(const udp::endpoint &endpoint);
 
-  // --- member variables ---
 
   ProtocolMode mode_;
   UdpServer *server_;
@@ -113,7 +110,7 @@ private:
   // maps endpoint string keys back to actual endpoint objects
   std::unordered_map<std::string, udp::endpoint> endpoint_map_;
 
-  // manages reliability logic
+
   std::unique_ptr<ReliabilityManager> reliability_manager_;
 
   // callback function pointer (set by messagemanager)

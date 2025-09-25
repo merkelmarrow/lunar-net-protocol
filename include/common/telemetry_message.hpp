@@ -15,8 +15,6 @@
 
 namespace nm = nlohmann;
 
-// represents a telemetry data message, typically sent from rover to base
-// station
 class TelemetryMessage : public Message {
 public:
   TelemetryMessage(const std::map<std::string, double> &readings,
@@ -42,12 +40,11 @@ public:
     return LumenHeader::MessageType::DATA;
   }
 
-  // --- getter ---
   const std::map<std::string, double> &get_readings() const {
     return readings_;
   }
 
-  // --- static factory methods ---
+  // factory methods
 
   static std::string message_type() { return "TelemetryMessage"; }
 

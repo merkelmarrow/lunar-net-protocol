@@ -12,7 +12,7 @@ namespace tp_utils {
 
 std::string tp_to_string(const std::chrono::system_clock::time_point &tp) {
   try {
-    // format as iso 8601 date and time with timezone offset (requires c++20)
+    // format as iso 8601 date and time with timezone offset (needs c++20)
     return std::format("{:%FT%T%z}", tp);
   } catch (const std::format_error &e) {
     std::cerr << "[ERROR] Failed to format time_point: " << e.what()
@@ -27,15 +27,14 @@ string_to_tp(const std::string &time_str) {
   std::istringstream ss(time_str);
 
   try {
-    // attempt parse common iso 8601 formats with timezone (requires c++20)
-    // try format with numeric offset first (e.g., +0100)
+    // attempt parse common iso 8601 formats with timezone (needs c++20)
     if (ss >> std::chrono::parse("%FT%T%z", result); !ss.fail()) {
       return result;
     }
 
-    // reset stream state and try utc format 'z'
-    ss.clear();  // clear fail bits
-    ss.seekg(0); // reset position
+
+    ss.clear();
+    ss.seekg(0);
 
     if (ss >> std::chrono::parse("%FT%T%Z", result); !ss.fail()) {
       return result;
@@ -46,7 +45,6 @@ string_to_tp(const std::string &time_str) {
                              "(tried %FT%T%z and %FT%T%Z).");
 
   } catch (const std::exception &e) {
-    // catch errors from parsing or explicit throw
     std::cerr << "[ERROR] Failed to parse timestamp string '" << time_str
               << "' using std::chrono::parse. Error: " << e.what() << std::endl;
     std::cerr << "[WARN] Using current time as fallback." << std::endl;

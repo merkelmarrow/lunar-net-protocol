@@ -41,7 +41,7 @@ public:
 
   const std::string &get_content() const { return content_; }
 
-  // --- static factory methods ---
+  // factory methods
 
   static std::string message_type() { return "BasicMessage"; }
 
