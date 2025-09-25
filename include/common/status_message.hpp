@@ -17,12 +17,11 @@ namespace nm = nlohmann;
 // represents a status update message, sent from rover to base station
 class StatusMessage : public Message {
 public:
-  // defines the severity level of the status report
   enum class StatusLevel {
     OK,
     WARNING,
     ERROR,
-    CRITICAL // non-recoverable error or critical failure
+    CRITICAL
   };
 
   StatusMessage(StatusLevel level, const std::string &description,
@@ -80,11 +79,10 @@ public:
     return LumenHeader::MessageType::STATUS;
   }
 
-  // --- getters ---
   StatusLevel get_level() const { return level_; }
   const std::string &get_description() const { return description_; }
 
-  // --- static factory methods ---
+  // factory methods
 
   static std::string message_type() { return "StatusMessage"; }
 

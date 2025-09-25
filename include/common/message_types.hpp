@@ -9,7 +9,7 @@
 #include "telemetry_message.hpp"
 
 // a central registry of all message types
-// used by the message factory to dispatch deserialization
+// used by the message factory
 #define MESSAGE_TYPES_LIST                                                     \
   X(BasicMessage)                                                              \
   X(CommandMessage)                                                            \

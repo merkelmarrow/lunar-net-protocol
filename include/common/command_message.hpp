@@ -41,12 +41,12 @@ public:
     return LumenHeader::MessageType::CMD; // maps to command type in protocol
   }
 
-  // --- getters ---
+
   const std::string &get_command() const { return command_; }
 
   const std::string &get_params() const { return params_; }
 
-  // --- static factory methods ---
+  // factory methods
 
   static std::string message_type() { return "CommandMessage"; }
 

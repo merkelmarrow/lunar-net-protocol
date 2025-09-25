@@ -17,23 +17,20 @@
 #include <memory>
 #include <vector>
 
-// ports for additional listeners used in this test main
+// ports for listeners
 const int EXTRA_LISTENER_PORT = 60060;
 const int COORD_REQUEST_TARGET_PORT = 50050;
-const int BASE_PORT = 9000; // base station standard port
+const int BASE_PORT = 9000; // base
 
 int main() {
-  // todo: make base host configurable
   const std::string BASE_HOST = "10.237.0.201";
-  const std::string ROVER_ID = "grp-18"; // example rover id
+  const std::string ROVER_ID = "grp-18";
 
   try {
     boost::asio::io_context io_context;
 
     Rover rover(io_context, BASE_HOST, BASE_PORT, ROVER_ID);
 
-    // set up application message handler for messages not handled internally by
-    // rover
     rover.set_application_message_handler(
         [&](std::unique_ptr<Message> message,
             const boost::asio::ip::udp::endpoint &sender) {
@@ -44,7 +41,6 @@ int main() {
                     << sender.address().to_string() << ":" << sender.port()
                     << std::endl;
 
-          // example: print basic messages to terminal
           if (message->get_type() == BasicMessage::message_type()) {
             BasicMessage *basic_msg =
                 dynamic_cast<BasicMessage *>(message.get());
@@ -53,24 +49,25 @@ int main() {
                         << std::endl;
             }
           }
-          // add handling for other application-specific messages here
+
+          ////// more message types here later
         });
 
-    rover.start(); // starts rover logic, including handshake attempt
-    rover.update_current_position(53.3498, -6.2603); // set initial position
+    rover.start();
+    rover.update_current_position(53.3498, -6.2603);
 
     std::cout << "[ROVER MAIN] Rover started. Attempting handshake with "
               << BASE_HOST << ":" << BASE_PORT << "." << std::endl;
 
-    // --- extra listeners for testing/demo purposes ---
+
     std::vector<boost::asio::ip::udp::endpoint>
-        received_endpoints; // track endpoints heard from
+        received_endpoints;
     auto extra_listener =
         std::make_shared<UdpServer>(io_context, EXTRA_LISTENER_PORT);
     auto coords_listener =
         std::make_shared<UdpServer>(io_context, COORD_REQUEST_TARGET_PORT);
 
-    // handler for the generic extra listener port
+
     extra_listener->set_receive_callback(
         [&rover, &received_endpoints,
          &ROVER_ID](const std::vector<uint8_t> &data,
@@ -97,7 +94,7 @@ int main() {
                       << std::endl;
           }
 
-          // send ack back using rover's raw send capability
+          // send ack back
           BasicMessage response_msg("Acknowledged. We are group 18.", ROVER_ID);
           std::cout << "[Listener " << EXTRA_LISTENER_PORT
                     << "] Sending ACK message back to " << sender << std::endl;
@@ -119,8 +116,9 @@ int main() {
 
           // respond with current location
           std::map<std::string, double> location = {
+              /////// TODO: USE THE ACTUAL LOCATION WHEN LOGIC IS READY
               {"latitude", 53.3498},
-              {"longitude", -6.2603}}; // todo: get actual current location
+              {"longitude", -6.2603}};
           TelemetryMessage location_msg(location, ROVER_ID);
           std::cout << "[Listener " << COORD_REQUEST_TARGET_PORT
                     << "] Sending location message back to " << sender
@@ -134,13 +132,11 @@ int main() {
               << EXTRA_LISTENER_PORT << "." << std::endl;
     std::cout << "[ROVER MAIN] Started coords listener on port "
               << COORD_REQUEST_TARGET_PORT << "." << std::endl;
-    // --- end extra listeners ---
 
-    // --- periodic task timers ---
     boost::asio::steady_timer request_timer(
-        io_context); // timer for requesting coords from others
+        io_context);
     boost::asio::steady_timer broadcast_timer(
-        io_context); // timer for broadcasting presence
+        io_context);
 
     std::function<void(const boost::system::error_code &)>
         broadcast_timer_handler;
@@ -173,11 +169,10 @@ int main() {
         }
       }
 
-      request_timer.expires_after(std::chrono::seconds(17)); // reschedule
+      request_timer.expires_after(std::chrono::seconds(17));
       request_timer.async_wait(request_timer_handler);
     };
 
-    // handler for broadcast timer
     broadcast_timer_handler = [&](const boost::system::error_code &ec) {
       if (ec == boost::asio::error::operation_aborted) {
         std::cout << "[Broadcast Timer] Timer cancelled." << std::endl;
@@ -195,17 +190,15 @@ int main() {
       } else {
         std::cout << "[Broadcast Timer] Sending periodic broadcast..."
                   << std::endl;
-        // use the extra listener's scan function for demo
         if (extra_listener) {
           extra_listener->scan_for_rovers(EXTRA_LISTENER_PORT, "ACK IF ALIVE",
                                           ROVER_ID);
         }
       }
-      broadcast_timer.expires_after(std::chrono::seconds(23)); // reschedule
+      broadcast_timer.expires_after(std::chrono::seconds(23));
       broadcast_timer.async_wait(broadcast_timer_handler);
     };
 
-    // start timers
     broadcast_timer.expires_at(std::chrono::steady_clock::now());
     broadcast_timer.async_wait(broadcast_timer_handler);
     std::cout << "[ROVER MAIN] Periodic broadcast timer started." << std::endl;
@@ -213,9 +206,8 @@ int main() {
     request_timer.expires_after(std::chrono::seconds(14));
     request_timer.async_wait(request_timer_handler);
     std::cout << "[ROVER MAIN] Coordinate request timer started." << std::endl;
-    // --- end periodic task timers ---
 
-    // handle graceful shutdown on sigint/sigterm
+    // handle shutdown on sigint/sigterm
     boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
     signals.async_wait(
         [&](const boost::system::error_code &, int /*signal_number*/) {
@@ -227,7 +219,7 @@ int main() {
           if (coords_listener)
             coords_listener->stop();
           rover.stop();
-          io_context.stop(); // stop the asio event loop
+          io_context.stop();
         });
 
     std::cout << "[ROVER MAIN] Rover, listener, and timer running. Press "

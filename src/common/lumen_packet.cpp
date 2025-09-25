@@ -7,22 +7,19 @@
 #include <optional>
 #include <vector>
 
-// constructor: takes header and payload, ensures payload length correct in
-// header
+// constructor takes header and payload, ensures payload length correct in header
 LumenPacket::LumenPacket(const LumenHeader &header,
                          const std::vector<uint8_t> &payload)
     : header_(header), payload_(payload) {
-  // ensure header reflects actual payload size
   header_.set_payload_length(static_cast<uint16_t>(payload_.size()));
 }
 
-// factory method: attempts to parse a lumenpacket from byte stream
+// factory method that attempts to parse a lumenpacket from byte stream
 std::optional<LumenPacket>
 LumenPacket::from_bytes(const std::vector<uint8_t> &bytes) {
   // step 1: try parsing header first
   auto header_opt = LumenHeader::from_bytes(bytes);
   if (!header_opt) {
-    // not enough bytes or stx missing/incorrect
     return std::nullopt;
   }
   LumenHeader header = *header_opt;
@@ -88,7 +85,7 @@ std::vector<uint8_t> LumenPacket::to_bytes() const {
   packet_bytes.insert(packet_bytes.end(), payload_.begin(), payload_.end());
 
   // calculate crc over combined header and payload
-  uint8_t crc = calculate_packet_crc(); // use internal helper
+  uint8_t crc = calculate_packet_crc();
   packet_bytes.push_back(crc);
 
   // append etx marker
@@ -97,32 +94,27 @@ std::vector<uint8_t> LumenPacket::to_bytes() const {
   return packet_bytes;
 }
 
-// returns total expected size of packet on the wire
+// returns total expected size of packet
 size_t LumenPacket::total_size() const {
   // header size + payload size + crc (1 byte) + etx (1 byte)
   return LUMEN_HEADER_SIZE + payload_.size() + 2;
 }
 
-// calculates crc8 checksum over packet's header and payload
 uint8_t LumenPacket::calculate_packet_crc() const {
   std::vector<uint8_t> data_for_crc;
-  data_for_crc.reserve(LUMEN_HEADER_SIZE + payload_.size()); // reserve space
+  data_for_crc.reserve(LUMEN_HEADER_SIZE + payload_.size());
 
-  // get header bytes
   std::vector<uint8_t> header_bytes = header_.to_bytes();
   data_for_crc.insert(data_for_crc.end(), header_bytes.begin(),
                       header_bytes.end());
 
-  // append payload bytes
   data_for_crc.insert(data_for_crc.end(), payload_.begin(), payload_.end());
 
-  // calculate crc over combined data using static method from lumenheader
   return LumenHeader::calculate_crc8(data_for_crc);
 }
 
-// performs self-validation check (mainly for testing/debugging)
 bool LumenPacket::is_valid() const {
-  std::vector<uint8_t> packet_data = to_bytes(); // serialize self
+  std::vector<uint8_t> packet_data = to_bytes();
 
   // basic size check
   if (packet_data.size() <
@@ -130,13 +122,12 @@ bool LumenPacket::is_valid() const {
     return false;
   }
 
-  // check etx marker
   if (packet_data.back() != LUMEN_ETX) {
     return false;
   }
 
   // verify crc
-  size_t crc_pos = packet_data.size() - 2; // crc is second to last byte
+  size_t crc_pos = packet_data.size() - 2;
   std::vector<uint8_t> data_for_crc(packet_data.begin(),
                                     packet_data.begin() + crc_pos);
   uint8_t calculated_crc = LumenHeader::calculate_crc8(data_for_crc);
@@ -145,9 +136,7 @@ bool LumenPacket::is_valid() const {
   return calculated_crc == stored_crc;
 }
 
-// static helper to find crc position
 size_t LumenPacket::get_crc_position(const std::vector<uint8_t> &packet_data) {
-  // crc is located right before etx byte (last byte)
   if (packet_data.size() < 2)
     return 0; // avoid underflow
   return packet_data.size() - 2;

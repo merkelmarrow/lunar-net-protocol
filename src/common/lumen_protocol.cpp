@@ -22,14 +22,13 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
           std::make_unique<ReliabilityManager>(io_context, true)),
       running_(false), io_context_(io_context) {
 
-  // provide reliabilitymanager with a callback to retransmit packets via this
-  // instance
+  // provide reliabilitymanager with a callback to retransmit packets via this instance
   reliability_manager_->set_retransmit_callback(
       [this](const LumenPacket &packet, const udp::endpoint &endpoint) {
         send_packet(packet, endpoint);
       });
 
-  // set the callback for the underlying udpserver to pass received data up
+  // set the callback for the  udpserver to pass received data up
   server_->set_receive_callback(
       [this](const std::vector<uint8_t> &data, const udp::endpoint &endpoint) {
         handle_udp_data(data, endpoint);
@@ -53,14 +52,13 @@ LumenProtocol::LumenProtocol(boost::asio::io_context &io_context,
           std::make_unique<ReliabilityManager>(io_context, false)),
       running_(false), io_context_(io_context) {
 
-  // provide reliabilitymanager with a callback to retransmit packets via this
-  // instance
+  // provide reliabilitymanager with a callback to retransmit packets via this instance
   reliability_manager_->set_retransmit_callback(
       [this](const LumenPacket &packet, const udp::endpoint &endpoint) {
         send_packet(packet, endpoint);
       });
 
-  // set the callback for the underlying udpclient to pass received data up
+  // set the callback for udpclient to pass received data up
   client_->set_receive_callback(
       [this](const std::vector<uint8_t> &data, const udp::endpoint &sender) {
         handle_udp_data(data, sender);
@@ -115,7 +113,7 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
     return;
   }
 
-  uint8_t seq = current_sequence_++; // get next sequence number
+  uint8_t seq = current_sequence_++;
   uint32_t timestamp = generate_timestamp();
   LumenHeader header(type, priority, seq, timestamp,
                      static_cast<uint16_t>(payload.size()));
@@ -123,7 +121,6 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
 
   udp::endpoint target_endpoint;
   if (mode_ == ProtocolMode::BASE_STATION) {
-    // base station needs an explicit recipient
     if (recipient.address().is_unspecified()) {
       std::cerr << "[ERROR] No recipient specified for base station mode"
                 << std::endl;
@@ -131,8 +128,7 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
     }
     target_endpoint = recipient;
   } else {
-    // rover sends to registered base by default, unless specific recipient
-    // provided
+    // rover sends to registered base by default, unless specific recipient provided
     if (!recipient.address().is_unspecified()) {
       target_endpoint = recipient;
     } else {
@@ -155,9 +151,9 @@ void LumenProtocol::send_message(const std::vector<uint8_t> &payload,
 }
 
 void LumenProtocol::reset_sequence_number() {
-  current_sequence_ = 0; // reset sequence counter
+  current_sequence_ = 0;
   if (reliability_manager_) {
-    reliability_manager_->reset_state(); // reset reliability state
+    reliability_manager_->reset_state();
   }
   {
     std::lock_guard<std::mutex> lock(frame_buffers_mutex_);
@@ -224,8 +220,7 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
               << message->get_type() << std::endl;
 
           // repackage and send to messagemanager via existing callback
-          // mechanism
-          LumenHeader dummy_header( // create a dummy header
+          LumenHeader dummy_header(
               LumenHeader::MessageType::DATA, LumenHeader::Priority::MEDIUM, 0,
               generate_timestamp(), static_cast<uint16_t>(data.size()));
 
@@ -263,7 +258,7 @@ void LumenProtocol::handle_udp_data(const std::vector<uint8_t> &data,
     // fall through if json processing failed
   }
 
-  // fallback: treat data as a raw string and wrap in basicmessage
+  // fallback, treat data as a raw string and wrap in basicmessage
   std::cout << "[LUMEN] Received non-Lumen, non-JSON data from " << endpoint
             << ". Wrapping in BasicMessage." << std::endl;
 
@@ -317,7 +312,6 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
     // lumenpacket::from_bytes checks stx, header, length, crc, etx
     auto packet_opt = LumenPacket::from_bytes(buffer);
 
-    // if not enough data or packet invalid
     if (!packet_opt) {
       // try parsing just header to get expected size
       auto header_opt = LumenHeader::from_bytes(buffer);
@@ -360,7 +354,7 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
           continue; // try processing from next stx
         } else {
           // no stx found or only at start but header failed
-          if (buffer.size() > MAX_FRAME_BUFFER_SIZE / 2) { // heuristic
+          if (buffer.size() > MAX_FRAME_BUFFER_SIZE / 2) {
             std::cerr << "[LUMEN] No valid STX found in large buffer for "
                       << endpoint_key << ". Clearing " << buffer.size()
                       << " bytes." << std::endl;
@@ -385,7 +379,7 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
                 << ") > buffer size (" << buffer.size()
                 << ") after successful parse for " << endpoint_key
                 << ". Clearing buffer." << std::endl;
-      buffer.clear(); // prevent potential infinite loops
+      buffer.clear(); // prevent infinite loops
       break;
     }
 
@@ -394,7 +388,6 @@ void LumenProtocol::process_frame_buffer(const std::string &endpoint_key,
 
   } // end while loop
 
-  // prevent buffer growing indefinitely
   if (buffer.size() > MAX_FRAME_BUFFER_SIZE) {
     std::cerr << "[LUMEN] Frame buffer for endpoint " << endpoint_key
               << " exceeded max size (" << buffer.size() << " > "
@@ -417,11 +410,9 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
 
   reliability_manager_->record_received_sequence(seq, endpoint);
 
-  // --- handle control packets (ack/nak) ---
   if (type == LumenHeader::MessageType::ACK) {
-    // rover expects acks from base station
     if (mode_ == ProtocolMode::ROVER && payload.size() >= 1) {
-      uint8_t acked_seq = payload[0]; // ack payload contains seq being acked
+      uint8_t acked_seq = payload[0];
       std::cout << "[LUMEN] Processing ACK for original seq: "
                 << static_cast<int>(acked_seq) << std::endl;
       reliability_manager_->process_ack(acked_seq);
@@ -430,31 +421,29 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
                    "BASE_STATION mode from "
                 << endpoint << std::endl;
     }
-    return; // acks processed here
+    return;
   }
 
   if (type == LumenHeader::MessageType::NAK) {
-    // base station expects naks from rover
     if (mode_ == ProtocolMode::BASE_STATION && payload.size() >= 1) {
       uint8_t requested_seq =
-          payload[0]; // nak payload contains seq being requested
+          payload[0];
       std::cout << "[LUMEN] Processing NAK for missing seq: "
                 << static_cast<int>(requested_seq) << std::endl;
       reliability_manager_->process_nak(
-          requested_seq); // reliabilitymanager handles retransmission
+          requested_seq);
     } else if (mode_ == ProtocolMode::ROVER) {
       std::cout << "[LUMEN] Warning: Ignoring unexpected NAK received in ROVER "
                    "mode from "
                 << endpoint << std::endl;
     }
-    return; // naks processed here
+    return;
   }
-  // --- end control packet handling ---
 
   bool forward_payload = true; // assume forward unless known duplicate
 
   if (mode_ == ProtocolMode::BASE_STATION) {
-    bool is_active = session_active_.load(); // check session state flag
+    bool is_active = session_active_.load();
 
     // check if we already know this sequence number
     bool already_acked =
@@ -464,7 +453,7 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
       // session active: send ack unless duplicate, resend ack if duplicate
       if (!already_acked) {
         reliability_manager_->record_acked_sequence(
-            seq, endpoint);      // record ack first time
+            seq, endpoint); // record ack first time
         send_ack(seq, endpoint); // send ack
       } else {
         // duplicate packet received while active
@@ -486,20 +475,17 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
                   << " received while inactive. Not forwarding payload."
                   << std::endl;
       }
-      // note: if non-duplicate packet arrives while inactive, we don't ack, but
-      // might forward payload
     }
   }
 
   // rover checks for gaps periodically after receiving packets
   if (mode_ == ProtocolMode::ROVER) {
     static uint8_t check_counter = 0;
-    if (++check_counter % 5 == 0) { // check roughly every 5 packets
+    if (++check_counter % 5 == 0) { // check every 5 packets
       check_sequence_gaps(endpoint);
     }
   }
 
-  // --- forward payload to upper layer (messagemanager) ---
   if (forward_payload) {
     std::function<void(const std::vector<uint8_t> &, const LumenHeader &,
                        const udp::endpoint &)>
@@ -522,7 +508,6 @@ void LumenProtocol::process_complete_packet(const LumenPacket &packet,
 
 // checks for missing sequence numbers (rover only)
 void LumenProtocol::check_sequence_gaps(const udp::endpoint &endpoint) {
-  // ask reliabilitymanager for sequences deemed missing
   std::vector<uint8_t> missing_seqs =
       reliability_manager_->get_missing_sequences(endpoint);
 
@@ -531,10 +516,10 @@ void LumenProtocol::check_sequence_gaps(const udp::endpoint &endpoint) {
   int nak_count = 0;
 
   for (uint8_t missing_seq : missing_seqs) {
-    // reliabilitymanager determines if nak sent recently
+    // reliabilitymanager checks if nak sent recently
     if (!reliability_manager_->is_recently_naked(missing_seq)) {
       send_nak(missing_seq, endpoint);
-      reliability_manager_->record_nak_sent(missing_seq); // mark nak as sent
+      reliability_manager_->record_nak_sent(missing_seq);
 
       if (++nak_count >= MAX_NAKS_PER_CHECK) {
         std::cout << "[LUMEN] Reached NAK limit for this check ("
@@ -545,10 +530,10 @@ void LumenProtocol::check_sequence_gaps(const udp::endpoint &endpoint) {
   }
 }
 
-// sends a fully formed lumenpacket over the appropriate udp transport
+// sends a fully formed lumenpacket over udp
 void LumenProtocol::send_packet(const LumenPacket &packet,
                                 const udp::endpoint &recipient) {
-  std::vector<uint8_t> data = packet.to_bytes(); // serialize packet
+  std::vector<uint8_t> data = packet.to_bytes();
 
   try {
     if (mode_ == ProtocolMode::BASE_STATION) {
@@ -569,7 +554,7 @@ void LumenProtocol::send_packet(const LumenPacket &packet,
       try {
         sending_to_base = (recipient == client_->get_base_endpoint());
       } catch (const std::runtime_error &) {
-        // handle case where base endpoint might not be resolved yet
+        // case where base endpoint might not be resolved yet
         sending_to_base = false;
       }
 
@@ -597,10 +582,7 @@ void LumenProtocol::send_ack(uint8_t seq_to_ack,
     return;
   }
 
-  // record locally that we have acknowledged this sequence
   reliability_manager_->record_acked_sequence(seq_to_ack, recipient);
-
-  // ack payload contains sequence number being acknowledged
   std::vector<uint8_t> ack_payload = {seq_to_ack};
 
   // create ack packet header with its own sequence number
@@ -629,7 +611,6 @@ void LumenProtocol::send_nak(uint8_t seq_requested, const udp::endpoint &) {
     return;
   }
 
-  // ensure client and base endpoint are valid
   if (!client_) {
     std::cerr << "[LUMEN] Cannot send NAK: Client pointer is null."
               << std::endl;
@@ -650,7 +631,7 @@ void LumenProtocol::send_nak(uint8_t seq_requested, const udp::endpoint &) {
   // create nak packet header with its own sequence number
   uint32_t timestamp = generate_timestamp();
   uint8_t nak_seq =
-      current_sequence_++; // sequence number for this nak packet itself
+      current_sequence_++;
 
   LumenHeader nak_header(LumenHeader::MessageType::NAK,
                          LumenHeader::Priority::HIGH, nak_seq, timestamp,
@@ -665,13 +646,13 @@ void LumenProtocol::send_nak(uint8_t seq_requested, const udp::endpoint &) {
             << " to base " << base_endpoint << std::endl;
 }
 
-// generates a 32-bit timestamp (milliseconds since epoch, truncated)
+// generates a 32-bit
 uint32_t LumenProtocol::generate_timestamp() const {
   auto now = std::chrono::system_clock::now();
   auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now.time_since_epoch())
                     .count();
-  return static_cast<uint32_t>(millis & 0xFFFFFFFF); // mask to fit 32 bits
+  return static_cast<uint32_t>(millis & 0xFFFFFFFF);
 }
 
 // callback handler provided to reliabilitymanager for retransmissions
@@ -680,7 +661,7 @@ void LumenProtocol::handle_retransmission(const LumenPacket &packet,
   std::cout << "[LUMEN] Retransmitting packet seq: "
             << static_cast<int>(packet.get_header().get_sequence()) << " to "
             << endpoint << std::endl;
-  // simply resend the exact same packet
+  // resend the exact same packet
   send_packet(packet, endpoint);
 }
 

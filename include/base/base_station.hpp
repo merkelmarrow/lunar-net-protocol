@@ -20,10 +20,9 @@ class TelemetryMessage;
 
 using boost::asio::ip::udp;
 
-// main application logic for the base station node
 class BaseStation {
 public:
-  // defines the possible states of the session with the rover
+
   enum class SessionState {
     INACTIVE,
     HANDSHAKE_INIT,   // received session_init
@@ -31,13 +30,11 @@ public:
     ACTIVE
   };
 
-  // callback function type for handling general, non-internal application
-  // messages
+  // callback function type for handling general, non-internal application messages
   using ApplicationMessageHandler =
       std::function<void(std::unique_ptr<Message>, const udp::endpoint &)>;
 
   // specific callback function type primarily for handling status and telemetry
-  // data
   using StatusCallback = std::function<void(
       const std::string &, const std::map<std::string, double> &)>;
 
@@ -68,39 +65,33 @@ public:
 
   udp::endpoint get_rover_endpoint() const;
 
-  // sends a command message to the currently connected rover via the full
-  // protocol stack
+  // sends a command message to the currently connected rover via the full protocol stack
   void send_command(const std::string &command, const std::string &params);
 
-  // sends an application-level message to a specific recipient via the full
-  // protocol stack
+  // sends an application-level message to a specific recipient via the full protocol stack
   void send_message(const Message &message, const udp::endpoint &recipient);
 
   // sends a message directly via udp, bypassing lumenprotocol (sends raw json)
   void send_raw_message(const Message &message, const udp::endpoint &recipient);
 
 private:
-  // central routing function called by messagemanager when a message is
-  // received
+  // central routing function called by messagemanager when a message is received
   void route_message(std::unique_ptr<Message> message,
                      const udp::endpoint &sender);
 
-  // internal handler for specific command messages (primarily session
-  // management)
+  // internal handler for specific command messages (primarily session management)
   void handle_internal_command(CommandMessage *cmd_msg,
                                const udp::endpoint &sender);
 
-  // internal handler that processes statusmessages and invokes the
-  // status_callback_
+  // internal handler that processes statusmessages and invokes the status_callback_
   void handle_internal_status(StatusMessage *status_msg,
                               const StatusCallback &callback);
 
-  // internal handler that processes telemetrymessages and invokes the
-  // status_callback_
+  // internal handler that processes telemetrymessages and invokes the status_callback_
   void handle_internal_telemetry(TelemetryMessage *telemetry_msg,
                                  const StatusCallback &callback);
 
-  // --- session management methods ---
+
 
   // handles the session_init command received from a rover
   void handle_session_init(const std::string &rover_id,
@@ -110,7 +101,7 @@ private:
   void handle_session_confirm(const std::string &rover_id,
                               const udp::endpoint &sender);
 
-  // --- member variables ---
+
 
   boost::asio::io_context &io_context_;
   std::unique_ptr<UdpServer> server_;
@@ -120,14 +111,13 @@ private:
   ApplicationMessageHandler application_message_handler_ = nullptr;
   StatusCallback status_callback_ = nullptr;
 
-  // session state variables
+
   SessionState session_state_;
   std::string connected_rover_id_;
   udp::endpoint rover_endpoint_;
 
   std::string station_id_;
 
-  // mutexes for thread safety
   mutable std::mutex state_mutex_;
   std::mutex callback_mutex_;
   std::mutex handler_mutex_;

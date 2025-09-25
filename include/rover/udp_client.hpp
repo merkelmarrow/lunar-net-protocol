@@ -17,7 +17,6 @@
 
 using boost::asio::ip::udp;
 
-// provides asynchronous udp client functionality using boost.asio
 class UdpClient {
 public:
   UdpClient(boost::asio::io_context &io_context);
@@ -42,7 +41,7 @@ public:
       const std::vector<uint8_t> &data, int broadcast_port,
       const std::string &broadcast_address_str = "255.255.255.255");
 
-  // sets the callback function to be invoked when data is received
+  // sets the callback function to be called when data is received
   void set_receive_callback(
       std::function<void(const std::vector<uint8_t> &, const udp::endpoint &)>
           callback);
@@ -53,7 +52,6 @@ public:
   // stops the asynchronous receive loop and closes the socket
   void stop_receive();
 
-  // gets the resolved endpoint of the registered base station
   const udp::endpoint &get_base_endpoint() const;
 
 private:
@@ -71,17 +69,13 @@ private:
   udp::socket socket_;
 
   udp::endpoint base_endpoint_;
-  udp::endpoint receive_endpoint_; // stores the sender's endpoint from the last
-                                   // received packet
+  udp::endpoint receive_endpoint_; // stores the sender's endpoint from the last received packet
 
   std::array<char, CLIENT_SOCK_BUF_SIZE> receive_buffer_;
 
-  // callback signature modified to include sender endpoint
   std::function<void(const std::vector<uint8_t> &, const udp::endpoint &)>
       receive_callback_;
 
-  // flag to control the receive loop
   std::atomic<bool> running_;
-  // mutex to protect access to receive_callback_
   std::mutex callback_mutex_;
 };
