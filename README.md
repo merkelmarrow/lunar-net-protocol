@@ -1,6 +1,6 @@
 # LUMEN Lunar Networking Protocol and Simulation
 
-_Status_: Team lead of group project (4 members), completed. Also awarded the highest grade in the year group (77%).
+_Status_: Team lead of group project (4 members), completed. Awarded the highest grade in the year group (77%).
 
 _Tech Stack_: C/C++, CMake, Linux Networking (iptables, tc netem), libnetfilter_queue (Linux kernel library), UDP, custom networking protocol design, Boost.Asio, AWS (Lightsail), Wireguard, VPN relay, tmux, gotty webserver.
 
